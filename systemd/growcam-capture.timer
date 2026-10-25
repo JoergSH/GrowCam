@@ -1,0 +1,9 @@
+[Unit]
+Description=GrowCam: jede Minute pruefen, ob ein Bild faellig ist
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
