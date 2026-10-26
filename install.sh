@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # GrowCam installer – Zeitraffer-Kamera fuer Pflanzen mit Weboberflaeche
 #
-#   curl -fsSL https://raw.githubusercontent.com/@REPO@/main/install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/@REPO@/main/install.sh | bash -s -- --port 8081
+#   curl -fsSL https://raw.githubusercontent.com/JoergSH/GrowCam/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/JoergSH/GrowCam/main/install.sh | bash -s -- --port 8081
 #
 # oder im geklonten Repo:  ./install.sh [Optionen]
 #
 # Erneut ausfuehren = Update (Einstellungen und Bilder bleiben erhalten).
 set -euo pipefail
 
-REPO="${GROWCAM_REPO:-@REPO@}"
+REPO="${GROWCAM_REPO:-JoergSH/GrowCam}"
 BRANCH="${GROWCAM_BRANCH:-main}"
 APPDIR="/opt/growcam"
 ENVFILE="/etc/default/growcam"

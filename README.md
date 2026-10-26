@@ -20,7 +20,7 @@
 Ein Befehl auf dem Pi bzw. Linux-Rechner (Debian, Ubuntu, Raspberry Pi OS, Mint …):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/@REPO@/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/JoergSH/GrowCam/main/install.sh | bash
 ```
 
 Danach im Browser `http://<IP-des-Rechners>:8080` öffnen.
@@ -28,7 +28,7 @@ Danach im Browser `http://<IP-des-Rechners>:8080` öffnen.
 Optionen werden mit `bash -s --` angehängt:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/@REPO@/main/install.sh | bash -s -- --port 8081 --data /mnt/usb/growcam
+curl -fsSL https://raw.githubusercontent.com/JoergSH/GrowCam/main/install.sh | bash -s -- --port 8081 --data /mnt/usb/growcam
 ```
 
 | Option | Bedeutung | Standard |
@@ -41,7 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/@REPO@/main/install.sh | bash -s --
 Alternativ aus dem geklonten Repo:
 
 ```bash
-git clone https://github.com/@REPO@.git
+git clone https://github.com/JoergSH/GrowCam.git
 cd GrowCam && ./install.sh
 ```
 
@@ -103,7 +103,7 @@ Die Weboberfläche hat **keine Anmeldung**. Sie ist fürs Heimnetz gedacht, also
 GrowCam is a plant time-lapse camera with a web UI for any Linux box with a USB (UVC) webcam, from a Raspberry Pi 1 up to a PC. It captures only while the grow light is on, shows a gallery per day with gap detection, and renders time-lapse videos in the browser (date overlay, fps, width, every n-th frame). It has no dependencies beyond the Python standard library, `ffmpeg` and `v4l-utils`.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/@REPO@/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/JoergSH/GrowCam/main/install.sh | bash
 ```
 
 Then open `http://<ip>:8080`. On weak hardware (Pi 1/Zero) GrowCam automatically stores the camera's MJPEG frames as-is (almost no CPU), builds thumbnails at capture time, and renders videos at 1280 px using the Pi's hardware encoder if available. The UI is in German. It has no authentication, so keep it on your LAN.
