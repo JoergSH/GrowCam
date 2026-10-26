@@ -42,12 +42,12 @@ Alternativ aus dem geklonten Repo:
 
 ```bash
 git clone https://github.com/JoergSH/GrowCam.git
-cd GrowCam && ./install.sh
+cd GrowCam && bash install.sh
 ```
 
 **Update:** einfach den Installer erneut ausführen. Einstellungen und Bilder bleiben erhalten.
 
-**Entfernen:** `sudo /opt/growcam/uninstall.sh`. Die Bilder bleiben erhalten; mit `--purge` wird auch der Datenordner gelöscht.
+**Entfernen:** `sudo bash /opt/growcam/uninstall.sh`. Die Bilder bleiben erhalten; mit `--purge` wird auch der Datenordner gelöscht.
 
 ## Hardware
 

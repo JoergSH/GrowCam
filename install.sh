@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/JoergSH/GrowCam/main/install.sh | bash
 #   curl -fsSL https://raw.githubusercontent.com/JoergSH/GrowCam/main/install.sh | bash -s -- --port 8081
 #
-# oder im geklonten Repo:  ./install.sh [Optionen]
+# oder im geklonten Repo:  bash install.sh [Optionen]
 #
 # Erneut ausfuehren = Update (Einstellungen und Bilder bleiben erhalten).
 set -euo pipefail
@@ -160,7 +160,7 @@ $SUDO systemctl daemon-reload
 
 if command -v ss >/dev/null && ss -ltnH "sport = :$PORT" 2>/dev/null | grep -q . \
    && ! systemctl is-active --quiet growcam-web; then
-  warn "Port $PORT ist schon belegt. Anderen Port waehlen: ./install.sh --port 8081"
+  warn "Port $PORT ist schon belegt. Anderen Port waehlen: bash install.sh --port 8081"
 fi
 
 if [ "$START" -eq 1 ]; then
