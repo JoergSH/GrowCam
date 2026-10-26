@@ -7,6 +7,7 @@
 # oder im geklonten Repo:  bash install.sh [Optionen]
 #
 # Erneut ausfuehren = Update (Einstellungen und Bilder bleiben erhalten).
+# shellcheck disable=SC2086  # $SUDO/$SYSTEMCTL werden absichtlich aufgeteilt
 set -euo pipefail
 
 REPO="${GROWCAM_REPO:-JoergSH/GrowCam}"
@@ -19,6 +20,9 @@ PORT=""
 DATA=""
 RUN_USER=""
 START=1
+USERMODE=0
+# Benutzer-Modus bereits installiert? -> beim Update beibehalten
+[ "$(id -u)" -ne 0 ] && [ -f "$HOME/.config/growcam/growcam.env" ] && USERMODE=1
 
 c_ok=$'\e[32m'; c_warn=$'\e[33m'; c_err=$'\e[31m'; c_b=$'\e[1m'; c_0=$'\e[0m'
 [ -t 1 ] || { c_ok=""; c_warn=""; c_err=""; c_b=""; c_0=""; }
@@ -35,6 +39,9 @@ Optionen:
   --data DIR     Datenordner fuer Bilder/Videos/Einstellungen (Standard: ~/growcam)
                  Tipp: USB-Stick/SSD statt SD-Karte, z.B. --data /mnt/usb/growcam
   --user NAME    Benutzer, unter dem GrowCam laeuft (Standard: aufrufender Benutzer)
+  --user-service Ohne Root installieren: Programm unter ~/.local/share/growcam,
+                 Dienste als systemd-Benutzerdienste (kein sudo noetig; python3,
+                 ffmpeg und v4l-utils muessen dann schon installiert sein)
   --no-start     Dienste installieren, aber nicht starten
   -h, --help     Diese Hilfe
 EOF
@@ -45,6 +52,7 @@ while [ $# -gt 0 ]; do
     --port) PORT="${2:?}"; shift 2 ;;
     --data) DATA="${2:?}"; shift 2 ;;
     --user) RUN_USER="${2:?}"; shift 2 ;;
+    --user-service) USERMODE=1; shift ;;
     --no-start) START=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unbekannte Option: $1 (siehe --help)" ;;
@@ -55,7 +63,17 @@ done
 [ "$(uname -s)" = "Linux" ] || die "GrowCam laeuft nur unter Linux."
 command -v systemctl >/dev/null && [ -d /run/systemd/system ] || die "systemd wird benoetigt."
 
-if [ "$(id -u)" -eq 0 ]; then
+SYSTEMCTL="systemctl"
+if [ "$USERMODE" -eq 1 ]; then
+  [ "$(id -u)" -ne 0 ] || die "--user-service bitte als normaler Benutzer ausfuehren."
+  [ -z "$RUN_USER" ] || [ "$RUN_USER" = "$(id -un)" ] || die "--user geht nicht zusammen mit --user-service."
+  SUDO=""
+  RUN_USER="$(id -un)"
+  APPDIR="$HOME/.local/share/growcam"
+  ENVFILE="$HOME/.config/growcam/growcam.env"
+  UNITDIR="$HOME/.config/systemd/user"
+  SYSTEMCTL="systemctl --user"
+elif [ "$(id -u)" -eq 0 ]; then
   SUDO=""
   RUN_USER="${RUN_USER:-${SUDO_USER:-}}"
   [ -n "$RUN_USER" ] && [ "$RUN_USER" != "root" ] || die "Bitte als normaler Benutzer starten (oder --user NAME angeben)."
@@ -79,8 +97,9 @@ DATA="${DATA:-$RUN_HOME/growcam}"
 case "$DATA" in "~"*) DATA="$RUN_HOME${DATA#\~}" ;; esac
 [[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || die "Ungueltiger Port: $PORT"
 
+[ "$USERMODE" -eq 1 ] && say "Benutzer-Modus (ohne Root)"
 say "${c_b}GrowCam-Installation${c_0} fuer Benutzer ${c_b}$RUN_USER${c_0}, Port ${c_b}$PORT${c_0}, Daten in ${c_b}$DATA${c_0}"
-MODEL="$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || true)"
+MODEL="$( { tr -d '\0' < /proc/device-tree/model; } 2>/dev/null || true)"
 say "System: ${MODEL:-$(uname -m)} ($(uname -m), $(nproc) Kern(e))"
 
 # ------------------------------------------------------------ Quellen finden
@@ -106,7 +125,11 @@ fi
 
 # ------------------------------------------------------------ Pakete
 PKGS=(python3 ffmpeg v4l-utils fonts-dejavu-core)
-if command -v apt-get >/dev/null; then
+if [ "$USERMODE" -eq 1 ]; then
+  for b in python3 ffmpeg v4l2-ctl; do
+    command -v "$b" >/dev/null || die "'$b' fehlt. Einmalig installieren: sudo apt install python3 ffmpeg v4l-utils fonts-dejavu-core"
+  done
+elif command -v apt-get >/dev/null; then
   MISSING=()
   for p in "${PKGS[@]}"; do
     dpkg -s "$p" >/dev/null 2>&1 || MISSING+=("$p")
@@ -128,8 +151,12 @@ python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 7) else 1)' || die
 
 # ------------------------------------------------------------ Benutzer & Daten
 if ! id -nG "$RUN_USER" | tr ' ' '\n' | grep -qx video; then
-  say "Fuege $RUN_USER zur Gruppe 'video' hinzu"
-  $SUDO usermod -aG video "$RUN_USER"
+  if [ "$USERMODE" -eq 1 ]; then
+    warn "$RUN_USER ist nicht in der Gruppe 'video' – Kamerazugriff evtl. verweigert (sudo usermod -aG video $RUN_USER)."
+  else
+    say "Fuege $RUN_USER zur Gruppe 'video' hinzu"
+    $SUDO usermod -aG video "$RUN_USER"
+  fi
 fi
 $SUDO mkdir -p "$DATA"
 $SUDO chown "$RUN_USER": "$DATA"
@@ -144,8 +171,9 @@ $SUDO rm -rf "$APPDIR"
 $SUDO mv "$APPDIR.new" "$APPDIR"
 $SUDO install -m 0755 "$SRC/uninstall.sh" "$APPDIR/uninstall.sh"
 
+$SUDO mkdir -p "$(dirname "$ENVFILE")" "$UNITDIR"
 $SUDO tee "$ENVFILE" >/dev/null <<EOF
-# GrowCam – nach Aenderung: sudo systemctl restart growcam-web
+# GrowCam – nach Aenderung: ${SUDO:+sudo }$SYSTEMCTL restart growcam-web
 GROWCAM_DATA=$DATA
 GROWCAM_PORT=$PORT
 EOF
@@ -153,27 +181,40 @@ EOF
 # ------------------------------------------------------------ Dienste
 say "Richte systemd-Dienste ein"
 for u in growcam-web.service growcam-capture.service growcam-capture.timer; do
-  sed -e "s|@USER@|$RUN_USER|g" -e "s|@APPDIR@|$APPDIR|g" "$SRC/systemd/$u" \
-    | $SUDO tee "$UNITDIR/$u" >/dev/null
+  if [ "$USERMODE" -eq 1 ]; then
+    # Benutzerdienste: kein User=/Gruppen, kein network-online, Ziel default.target
+    sed -e '/^User=/d' -e '/^SupplementaryGroups=/d' -e '/network-online.target/d' \
+        -e 's/multi-user.target/default.target/' \
+        -e "s|@APPDIR@|$APPDIR|g" -e "s|@ENVFILE@|$ENVFILE|g" "$SRC/systemd/$u" > "$UNITDIR/$u"
+  else
+    sed -e "s|@USER@|$RUN_USER|g" -e "s|@APPDIR@|$APPDIR|g" -e "s|@ENVFILE@|$ENVFILE|g" \
+        "$SRC/systemd/$u" | $SUDO tee "$UNITDIR/$u" >/dev/null
+  fi
 done
-$SUDO systemctl daemon-reload
+$SUDO $SYSTEMCTL daemon-reload
+if [ "$USERMODE" -eq 1 ] && [ "$(loginctl show-user "$RUN_USER" -p Linger --value 2>/dev/null)" != "yes" ]; then
+  loginctl enable-linger "$RUN_USER" 2>/dev/null \
+    || warn "Linger nicht aktiv – GrowCam laeuft nur, solange $RUN_USER angemeldet ist (sudo loginctl enable-linger $RUN_USER)."
+fi
 
 if command -v ss >/dev/null && ss -ltnH "sport = :$PORT" 2>/dev/null | grep -q . \
-   && ! systemctl is-active --quiet growcam-web; then
+   && ! $SYSTEMCTL is-active --quiet growcam-web; then
   warn "Port $PORT ist schon belegt. Anderen Port waehlen: bash install.sh --port 8081"
 fi
 
 if [ "$START" -eq 1 ]; then
-  $SUDO systemctl enable --now growcam-capture.timer >/dev/null
-  $SUDO systemctl enable growcam-web.service >/dev/null
-  $SUDO systemctl restart growcam-web.service
+  $SUDO $SYSTEMCTL enable --now growcam-capture.timer >/dev/null
+  $SUDO $SYSTEMCTL enable growcam-web.service >/dev/null
+  $SUDO $SYSTEMCTL restart growcam-web.service
 else
-  $SUDO systemctl enable growcam-capture.timer growcam-web.service >/dev/null
+  $SUDO $SYSTEMCTL enable growcam-capture.timer growcam-web.service >/dev/null
 fi
 
 # ------------------------------------------------------------ Kamera pruefen
 echo
-if [ -z "$SUDO" ]; then
+if [ "$USERMODE" -eq 1 ]; then
+  GROWCAM_DATA="$DATA" python3 "$APPDIR/core.py" info || true
+elif [ -z "$SUDO" ]; then
   runuser -u "$RUN_USER" -- env GROWCAM_DATA="$DATA" python3 "$APPDIR/core.py" info || true
 else
   sudo -u "$RUN_USER" env GROWCAM_DATA="$DATA" python3 "$APPDIR/core.py" info || true
@@ -186,5 +227,5 @@ IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 echo
 say "${c_b}Fertig!${c_0}  Weboberflaeche: ${c_b}http://${IP:-$(hostname)}:$PORT${c_0}"
 echo "    Zeitplan, Lichtzeiten und Bildeinstellungen dort unter 'Einstellungen'."
-echo "    Status:      systemctl status growcam-web growcam-capture.timer"
-echo "    Entfernen:   sudo $APPDIR/uninstall.sh   (Bilder bleiben erhalten)"
+echo "    Status:      $SYSTEMCTL status growcam-web growcam-capture.timer"
+echo "    Entfernen:   ${SUDO:+sudo }$APPDIR/uninstall.sh   (Bilder bleiben erhalten)"

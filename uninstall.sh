@@ -1,25 +1,37 @@
 #!/usr/bin/env bash
 # GrowCam entfernen. Bilder/Videos bleiben erhalten, ausser mit --purge.
+# Erkennt automatisch, ob GrowCam systemweit oder als Benutzerdienst installiert ist.
+# shellcheck disable=SC2086  # $SUDO/$SYSTEMCTL werden absichtlich aufgeteilt
 set -euo pipefail
 PURGE=0
 [ "${1:-}" = "--purge" ] && PURGE=1
-SUDO=""; [ "$(id -u)" -eq 0 ] || SUDO="sudo"
+
+if [ "$(id -u)" -ne 0 ] && [ -f "$HOME/.config/systemd/user/growcam-web.service" ]; then
+  SUDO=""; SYSTEMCTL="systemctl --user"
+  UNITDIR="$HOME/.config/systemd/user"
+  APPDIR="$HOME/.local/share/growcam"
+  ENVFILE="$HOME/.config/growcam/growcam.env"
+else
+  SUDO=""; [ "$(id -u)" -eq 0 ] || SUDO="sudo"
+  SYSTEMCTL="systemctl"
+  UNITDIR="/etc/systemd/system"
+  APPDIR="/opt/growcam"
+  ENVFILE="/etc/default/growcam"
+fi
 
 DATA=""
-if [ -f /etc/default/growcam ]; then
-  # shellcheck disable=SC1091
-  . /etc/default/growcam
+if [ -f "$ENVFILE" ]; then
+  # shellcheck disable=SC1090
+  . "$ENVFILE"
   DATA="${GROWCAM_DATA:-}"
 fi
 
 echo "==> Stoppe und entferne Dienste"
-$SUDO systemctl disable --now growcam-capture.timer growcam-web.service 2>/dev/null || true
-$SUDO rm -f /etc/systemd/system/growcam-web.service \
-            /etc/systemd/system/growcam-capture.service \
-            /etc/systemd/system/growcam-capture.timer
-$SUDO systemctl daemon-reload
+$SUDO $SYSTEMCTL disable --now growcam-capture.timer growcam-web.service 2>/dev/null || true
+$SUDO rm -f "$UNITDIR/growcam-web.service" "$UNITDIR/growcam-capture.service" "$UNITDIR/growcam-capture.timer"
+$SUDO $SYSTEMCTL daemon-reload
 echo "==> Entferne Programm"
-$SUDO rm -rf /opt/growcam /etc/default/growcam
+$SUDO rm -rf "$APPDIR" "$ENVFILE"
 
 if [ "$PURGE" -eq 1 ] && [ -n "$DATA" ] && [ -d "$DATA" ]; then
   echo "==> Loesche Datenordner $DATA"

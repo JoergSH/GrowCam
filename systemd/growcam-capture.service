@@ -5,6 +5,6 @@ Description=GrowCam Zeitraffer-Aufnahme (prueft Zeitplan)
 Type=oneshot
 User=@USER@
 SupplementaryGroups=video
-EnvironmentFile=/etc/default/growcam
+EnvironmentFile=@ENVFILE@
 ExecStart=/usr/bin/python3 @APPDIR@/core.py capture --scheduled
 Nice=5

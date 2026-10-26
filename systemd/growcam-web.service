@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 User=@USER@
 SupplementaryGroups=video
-EnvironmentFile=/etc/default/growcam
+EnvironmentFile=@ENVFILE@
 ExecStart=/usr/bin/python3 @APPDIR@/server.py
 Restart=always
 RestartSec=5

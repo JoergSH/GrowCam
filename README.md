@@ -36,6 +36,7 @@ curl -fsSL https://raw.githubusercontent.com/JoergSH/GrowCam/main/install.sh | b
 | `--port N` | Port der Weboberfläche | `8080` |
 | `--data DIR` | Ordner für Bilder, Videos und Einstellungen | `~/growcam` |
 | `--user NAME` | Benutzer, unter dem GrowCam läuft | aufrufender Benutzer |
+| `--user-service` | ohne Root/sudo installieren, als systemd-Benutzerdienst (Pakete müssen schon vorhanden sein) | – |
 | `--no-start` | nur installieren, nicht starten | – |
 
 Alternativ aus dem geklonten Repo:
@@ -47,7 +48,7 @@ cd GrowCam && bash install.sh
 
 **Update:** einfach den Installer erneut ausführen. Einstellungen und Bilder bleiben erhalten.
 
-**Entfernen:** `sudo bash /opt/growcam/uninstall.sh`. Die Bilder bleiben erhalten; mit `--purge` wird auch der Datenordner gelöscht.
+**Entfernen:** `sudo bash /opt/growcam/uninstall.sh` (im Benutzer-Modus: `bash ~/.local/share/growcam/uninstall.sh`). Die Bilder bleiben erhalten; mit `--purge` wird auch der Datenordner gelöscht.
 
 ## Hardware
 
