@@ -73,6 +73,17 @@ Auf einem Pi 1 / Zero (ARMv6 oder 1 Kern) erkennt GrowCam die schwache CPU selbs
 
 Alles lässt sich unter *Einstellungen → Kamera & Technik* auch manuell festlegen.
 
+## Fehlerbehebung
+
+**Paketinstallation extrem langsam oder bricht ab** (`Unable to connect to raspbian.raspberrypi.com`): Der Standard-Paketserver leitet manchmal auf einen überlasteten Spiegelserver weiter. Dann einen deutschen Spiegel eintragen und den Installer erneut starten:
+
+```bash
+sudo sed -i 's#http://raspbian.raspberrypi.com/raspbian#http://mirror.netcologne.de/raspbian/raspbian#g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null
+sudo apt-get update
+```
+
+**Pi 1 / Zero:** Die Installation von ffmpeg dauert dort 30–60 Minuten. Das ist normal, bitte nicht abbrechen.
+
 ## Bedienung & Tipps
 
 - **Flackern vermeiden:** Unter *Einstellungen* Weißabgleich und Belichtung auf manuell stellen und bei eingeschaltetem Growlicht feste Werte wählen.
