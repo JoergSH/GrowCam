@@ -530,7 +530,8 @@ def info():
     for k, v in fmts.items():
         print(f"  {k:8s}: {', '.join(v)}")
     print(f"Aufnahme : {fmt} {resolve_size(c, dev)} Modus={resolve_mode(c, fmt)}")
-    print(f"Video    : Encoder={video_encoder(c)}  empfohlene Breite={recommended_width()}")
+    print("Video    : pruefe Hardware-Encoder ...", end="\r", flush=True)
+    print(f"Video    : Encoder={video_encoder(c)}  empfohlene Breite={recommended_width()}     ")
 
 
 def main(argv):
