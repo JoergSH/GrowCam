@@ -139,10 +139,19 @@ elif command -v apt-get >/dev/null; then
     if grep -q '^armv6' <<<"$(uname -m)" || [ "$(nproc)" -le 1 ]; then
       warn "Auf einem Pi 1 / Zero dauert das SEHR lange (oft 30-60 Minuten). Bitte nicht abbrechen!"
     fi
-    $SUDO apt-get update
+    # Wiederholungen + IPv4: kurze Netz-Aussetzer (z.B. LTE) brechen sonst den ganzen Download ab
+    APT_OPTS=(-o Acquire::Retries=10 -o Acquire::ForceIPv4=true)
+    $SUDO apt-get "${APT_OPTS[@]}" update
     # Fortschritt sichtbar lassen (-q statt -qq), damit es nicht nach Haenger aussieht
-    $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -q -o Dpkg::Progress-Fancy=1 \
-      --no-install-recommends "${MISSING[@]}"
+    for try in 1 2 3; do
+      if $SUDO env DEBIAN_FRONTEND=noninteractive apt-get "${APT_OPTS[@]}" install -y -q \
+           -o Dpkg::Progress-Fancy=1 --no-install-recommends "${MISSING[@]}"; then
+        break
+      fi
+      [ "$try" -lt 3 ] || die "Paketinstallation fehlgeschlagen. Netzwerk pruefen und Installer erneut starten."
+      warn "Download unterbrochen – neuer Versuch $((try + 1))/3 (bereits geladene Pakete bleiben erhalten)"
+      sleep 10
+    done
   else
     say "Pakete bereits vorhanden"
   fi
