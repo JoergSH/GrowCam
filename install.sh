@@ -135,9 +135,14 @@ elif command -v apt-get >/dev/null; then
     dpkg -s "$p" >/dev/null 2>&1 || MISSING+=("$p")
   done
   if [ ${#MISSING[@]} -gt 0 ]; then
-    say "Installiere Pakete: ${MISSING[*]} (kann auf einem Pi 1 eine Weile dauern)"
-    $SUDO apt-get update -qq
-    $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${MISSING[@]}"
+    say "Installiere Pakete: ${MISSING[*]}"
+    if grep -q '^armv6' <<<"$(uname -m)" || [ "$(nproc)" -le 1 ]; then
+      warn "Auf einem Pi 1 / Zero dauert das SEHR lange (oft 30-60 Minuten). Bitte nicht abbrechen!"
+    fi
+    $SUDO apt-get update
+    # Fortschritt sichtbar lassen (-q statt -qq), damit es nicht nach Haenger aussieht
+    $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -q -o Dpkg::Progress-Fancy=1 \
+      --no-install-recommends "${MISSING[@]}"
   else
     say "Pakete bereits vorhanden"
   fi
