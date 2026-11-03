@@ -25,13 +25,17 @@ import sys
 import tempfile
 import time
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 BASE = os.path.abspath(os.path.expanduser(os.environ.get("GROWCAM_DATA", "~/growcam")))
 CFG_FILE = os.path.join(BASE, "config.json")
 IMG_DIR = os.path.join(BASE, "images")
 THUMB_DIR = os.path.join(BASE, "thumbs")
 VID_DIR = os.path.join(BASE, "videos")
+DARK_DIR = os.path.join(BASE, "dark")          # aussortierte, zu dunkle Bilder
+BRIGHT_FILE = os.path.join(BASE, "brightness.json")
+DARK_RETRY_DELAY = 20                          # Sekunden zwischen den Versuchen
+DARK_ACCEPT_AFTER = 3                          # so oft hintereinander dunkel -> neues Lichtniveau akzeptieren
 ERR_LOG = os.path.join(BASE, "error.log")
 LOCK_FILE = os.environ.get("GROWCAM_LOCK", os.path.join(tempfile.gettempdir(), "growcam.lock"))
 
@@ -58,6 +62,9 @@ DEFAULTS = {
     "contrast": 32,
     "saturation": 64,
     "sharpness": 3,
+    "dark_check": True,        # dunkle Ausreisser erkennen und neu aufnehmen
+    "dark_ratio": 50,          # % der ueblichen Helligkeit, darunter gilt ein Bild als zu dunkel
+    "dark_retries": 2,         # neue Versuche, bevor ein Bild aussortiert wird
 }
 
 # Kamera-Regler: Config-Schluessel -> (aktueller V4L2-Name, alter Name vor Kernel 5.x)
@@ -279,7 +286,11 @@ def validate_cfg(new):
         c["warmup"] = _clamp(new["warmup"], 1, 300)
     if "quality" in new:
         c["quality"] = _clamp(new["quality"], 1, 10)
-    for k in ("wb_auto", "exp_auto"):
+    if "dark_ratio" in new:
+        c["dark_ratio"] = _clamp(new["dark_ratio"], 10, 90)
+    if "dark_retries" in new:
+        c["dark_retries"] = _clamp(new["dark_retries"], 0, 5)
+    for k in ("wb_auto", "exp_auto", "dark_check"):
         if k in new:
             c[k] = bool(new[k])
     rng = None
@@ -464,7 +475,128 @@ def grab(c, path, size=None, warmup=None, quality=None, mode=None):
     return path
 
 
-def capture_now(c=None, lock_timeout=90):
+def image_brightness(path):
+    """Mittlere Helligkeit 0..255 (aus einem stark verkleinerten Graustufenbild)."""
+    w, _ = jpeg_size(path)
+    lowres = 0
+    while w and lowres < 3 and w / (2 ** (lowres + 1)) >= 64:
+        lowres += 1
+    cmd = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error"]
+    if lowres:
+        cmd += ["-lowres", str(lowres)]
+    cmd += ["-i", path, "-vf", "scale=32:24,format=gray", "-frames:v", "1", "-f", "rawvideo", "-"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0 or not r.stdout:
+        return None
+    return sum(r.stdout) / len(r.stdout)
+
+
+def _load_bright():
+    try:
+        with open(BRIGHT_FILE) as f:
+            st = json.load(f)
+        if isinstance(st, dict):
+            return {"history": list(st.get("history", []))[-12:], "dark_streak": int(st.get("dark_streak", 0))}
+    except (OSError, ValueError):
+        pass
+    return {"history": [], "dark_streak": 0}
+
+
+def _save_bright(st):
+    try:
+        tmp = BRIGHT_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(st, f)
+        os.replace(tmp, BRIGHT_FILE)
+    except OSError:
+        pass
+
+
+def _reference(st):
+    h = sorted(st["history"])
+    return h[len(h) // 2] if len(h) >= 3 else None
+
+
+def _discard_dark(path):
+    """Bild (und Vorschaubild) in den Ordner fuer aussortierte Bilder verschieben."""
+    day = os.path.basename(os.path.dirname(path))
+    dst_dir = os.path.join(DARK_DIR, day)
+    os.makedirs(dst_dir, exist_ok=True)
+    try:
+        os.replace(path, os.path.join(dst_dir, os.path.basename(path)))
+    except OSError:
+        pass
+    try:
+        os.remove(os.path.join(THUMB_DIR, day, os.path.basename(path)))
+    except OSError:
+        pass
+
+
+def _set_latest(path):
+    link = os.path.join(BASE, "latest.jpg")
+    try:
+        if os.path.lexists(link):
+            os.remove(link)
+        os.symlink(path, link)
+    except OSError:
+        pass
+
+
+def capture_checked(c=None):
+    """Geplante Aufnahme mit Pruefung auf dunkle Ausreisser.
+
+    Ist ein Bild deutlich dunkler als die letzten Bilder (z. B. weil das Licht im Moment
+    der Aufnahme kurz ausgesetzt hat), wird nach kurzer Pause neu aufgenommen. Bleibt es
+    dunkel, wird das Bild nach dark/ aussortiert und im Fehlerprotokoll vermerkt.
+    Kommen mehrere Aufnahmen hintereinander dunkel, gilt das als neues Lichtniveau.
+    """
+    c = c or load_cfg()
+    if not c.get("dark_check", True):
+        return capture_now(c)
+    st = _load_bright()
+    ratio = c.get("dark_ratio", 50) / 100.0
+    tries = 1 + int(c.get("dark_retries", 2))
+    for attempt in range(tries):
+        path = capture_now(c, update_latest=False)
+        y = image_brightness(path)
+        ref = _reference(st)
+        if y is None or ref is None or y >= ref * ratio:
+            break  # in Ordnung (oder noch keine Vergleichswerte)
+        if st["dark_streak"] + 1 >= DARK_ACCEPT_AFTER:
+            log_error(f"Helligkeit dauerhaft niedriger (Y={y:.0f} statt ~{ref:.0f}) - neues Lichtniveau uebernommen")
+            st["history"] = []
+            break
+        if attempt < tries - 1:
+            log_error(f"Bild zu dunkel (Y={y:.0f} statt ~{ref:.0f}) - Versuch {attempt + 2}/{tries} in {DARK_RETRY_DELAY} s")
+            for p in (path, os.path.join(THUMB_DIR, os.path.basename(os.path.dirname(path)), os.path.basename(path))):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+            time.sleep(DARK_RETRY_DELAY)
+            continue
+        _discard_dark(path)
+        st["dark_streak"] += 1
+        _save_bright(st)
+        log_error(f"Bild zu dunkel (Y={y:.0f} statt ~{ref:.0f}) nach {tries} Versuchen aussortiert"
+                  f" - setzt das Licht kurz aus? ({os.path.basename(path)})")
+        raise DarkImage(path)
+    st["dark_streak"] = 0
+    if y is not None:
+        st["history"] = (st["history"] + [round(y, 1)])[-12:]
+    _save_bright(st)
+    _set_latest(path)
+    return path
+
+
+class DarkImage(Exception):
+    pass
+
+
+def capture_now(c=None, lock_timeout=90, update_latest=True):
     c = c or load_cfg()
     now = datetime.datetime.now()
     day = now.strftime("%Y-%m-%d")
@@ -475,13 +607,8 @@ def capture_now(c=None, lock_timeout=90):
     with CamLock(lock_timeout):
         apply_controls(c)
         grab(c, path)
-    link = os.path.join(BASE, "latest.jpg")
-    try:
-        if os.path.lexists(link):
-            os.remove(link)
-        os.symlink(path, link)
-    except OSError:
-        pass
+    if update_latest:
+        _set_latest(path)
     make_thumb(path, os.path.join(THUMB_DIR, day, name))
     return path
 
@@ -540,8 +667,12 @@ def main(argv):
         if ("--cron" in argv or "--scheduled" in argv) and not due(c):
             return 0
         try:
-            p = capture_now(c)
+            scheduled = "--cron" in argv or "--scheduled" in argv
+            p = capture_checked(c) if scheduled else capture_now(c)
             print(p)
+            return 0
+        except DarkImage as e:
+            print(f"zu dunkel, aussortiert: {e}", file=sys.stderr)
             return 0
         except Exception as e:  # noqa
             log_error(f"Aufnahme fehlgeschlagen: {e}")

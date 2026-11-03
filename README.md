@@ -11,6 +11,7 @@
 - **Galerie** nach Tagen, mit Lücken-Erkennung (Kamera ausgefallen?), Lightbox und Download
 - **Video erstellen** im Browser: Zeitraum, fps, Breite, jedes n-te Bild, Datum/Uhrzeit-Einblendung
 - **Bildeinstellungen:** Weißabgleich und Belichtung fest einstellbar (wichtig, damit das Video nicht flackert), dazu Helligkeit, Kontrast, Sättigung und Schärfe. Die Bereiche liest GrowCam direkt aus der Kamera.
+- **Lichtaussetzer erkennen:** Ist ein Bild deutlich dunkler als die vorherigen, nimmt GrowCam nach 20 s neu auf. Bleibt es dunkel, wird es aussortiert (Ordner `dark/`) und im Fehlerprotokoll vermerkt, damit es nicht im Video landet.
 - **Statusanzeige:** freier Speicher, Anzahl Tage, für die der Platz noch reicht, Warnung, wenn keine Bilder mehr kommen, Fehlerprotokoll
 - **Touch-tauglich:** auch als feste Anzeige am Growzelt nutzbar
 - **Ohne Abhängigkeiten:** nur Python-Standardbibliothek, `ffmpeg` und `v4l-utils`, kein pip, keine Cloud

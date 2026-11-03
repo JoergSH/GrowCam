@@ -133,10 +133,25 @@ def status():
         "errors": errors,
         "job": job_snapshot(),
         "config": c,
+        "dark_today": dark_count(now.strftime("%Y-%m-%d")),
+        "dark_total": dark_count(),
         "version": core.VERSION,
         "hw": core.hw_profile(),
         "data_dir": core.BASE,
     }
+
+
+def dark_count(day=None):
+    """Anzahl aussortierter (zu dunkler) Bilder, fuer einen Tag oder insgesamt."""
+    if not os.path.isdir(core.DARK_DIR):
+        return 0
+    days = [day] if day else os.listdir(core.DARK_DIR)
+    n = 0
+    for d in days:
+        p = os.path.join(core.DARK_DIR, d)
+        if DAY_RE.match(d) and os.path.isdir(p):
+            n += sum(1 for f in os.listdir(p) if IMG_RE.match(f))
+    return n
 
 
 def job_snapshot():

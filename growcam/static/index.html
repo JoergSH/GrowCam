@@ -168,7 +168,10 @@ video{width:100%;border-radius:10px;background:#000;margin-top:10px}
           <label class="f"><span>Auflösung</span><select id="c-size"></select></label>
           <label class="f"><span>Vorlauf vor dem Foto: <b id="v-warm"></b> Frames</span><input id="c-warm" type="range" min="10" max="150" step="5"></label>
           <label class="f"><span>JPEG-Qualität (1 = beste): <b id="v-q"></b></span><input id="c-q" type="range" min="1" max="10"></label>
+          <label class="check"><input id="c-dark" type="checkbox"> Zu dunkle Bilder neu aufnehmen</label>
+          <label class="f"><span>Zu dunkel unter: <b id="v-dark"></b> % der üblichen Helligkeit</span><input id="c-darkr" type="range" min="20" max="80" step="5"></label>
         </div>
+        <p class="muted">Setzt das Licht im Moment der Aufnahme kurz aus, nimmt GrowCam nach 20 s noch einmal auf. Bleibt es dunkel, wird das Bild aussortiert (Ordner <i>dark</i>) und im Fehlerprotokoll vermerkt.</p>
         <p class="muted" id="c-est"></p>
       </div>
       <div class="card">
@@ -279,6 +282,7 @@ async function refreshStatus(){
   $('#sysinfo').innerHTML = `Uhrzeit: ${s.now}<br>Speicher: ${fmtB(s.disk_free)} frei von ${fmtB(s.disk_total)}<br>`+
     `Bilder gesamt: ${s.images_total} · pro Tag geplant: ${s.per_day}`+(s.days_left?` · Platz reicht für ca. ${s.days_left} Tage`:'')+
     `<br>Intervall: ${s.config.interval_min} min · Auflösung: ${s.config.size}`+
+    `<br>Zu dunkel aussortiert: heute ${s.dark_today} · insgesamt ${s.dark_total}`+
     `<br>Hardware: ${s.hw.model || s.hw.machine} (${s.hw.cpus} Kern${s.hw.cpus>1?'e':''})${s.hw.weak?' – sparsamer Modus':''}`+
     `<br>Datenordner: ${s.data_dir}<br>GrowCam ${s.version}`;
   if (!vwSet) { vwSet = true; if (s.hw.weak) $('#vw').value = '1280'; }
@@ -422,11 +426,11 @@ async function loadVideos(){
 }
 
 // ---------- settings
-const SL = [['c-warm','v-warm'],['c-q','v-q'],['c-wb','v-wb'],['c-exp','v-exp'],['c-br','v-br'],['c-co','v-co'],['c-sa','v-sa'],['c-sh','v-sh']];
+const SL = [['c-darkr','v-dark'],['c-warm','v-warm'],['c-q','v-q'],['c-wb','v-wb'],['c-exp','v-exp'],['c-br','v-br'],['c-co','v-co'],['c-sa','v-sa'],['c-sh','v-sh']];
 SL.forEach(([i,v]) => $('#'+i).addEventListener('input', () => { $('#'+v).textContent = i==='c-exp' ? expLabel(+$('#'+i).value) : $('#'+i).value; }));
 function expLabel(v){ const ms = v/10; return ms >= 1 ? `${ms.toFixed(ms<10?1:0)} ms` : `${v*100} µs`; }
-function syncDis(){ $('#c-wb').disabled = $('#c-wba').checked; $('#c-exp').disabled = $('#c-expa').checked; }
-$('#c-wba').onchange = syncDis; $('#c-expa').onchange = syncDis;
+function syncDis(){ $('#c-wb').disabled = $('#c-wba').checked; $('#c-exp').disabled = $('#c-expa').checked; $('#c-darkr').disabled = !$('#c-dark').checked; }
+$('#c-wba').onchange = syncDis; $('#c-expa').onchange = syncDis; $('#c-dark').onchange = syncDis;
 function estCfg(){
   const iv = +$('#c-interval').value, h = ((+$('#c-le').value - +$('#c-ls').value) + 24) % 24 || 24;
   $('#c-est').textContent = `${Math.floor(h*60/iv)} Bilder pro Tag → bei 24 fps ca. ${(h*60/iv/24).toFixed(1)} s Video pro Tag`;
@@ -448,6 +452,7 @@ async function loadCfg(){
   $('#c-q').closest('label').style.display = camera.mode === 'copy' ? 'none' : '';
   $('#c-interval').value = c.interval_min; $('#c-ls').value = c.light_start; $('#c-le').value = c.light_end;
   $('#c-size').value = c.size; $('#c-warm').value = c.warmup; $('#c-q').value = c.quality;
+  $('#c-dark').checked = c.dark_check !== false; $('#c-darkr').value = c.dark_ratio || 50;
   $('#c-wba').checked = c.wb_auto; $('#c-wb').value = c.wb_temp; $('#c-expa').checked = c.exp_auto; $('#c-exp').value = c.exposure;
   $('#c-br').value = c.brightness; $('#c-co').value = c.contrast; $('#c-sa').value = c.saturation; $('#c-sh').value = c.sharpness;
   SL.forEach(([i]) => $('#'+i).dispatchEvent(new Event('input'))); syncDis(); estCfg();
@@ -455,6 +460,7 @@ async function loadCfg(){
 $('#csave').onclick = async () => {
   const body = { interval_min:+$('#c-interval').value, light_start:+$('#c-ls').value, light_end:+$('#c-le').value,
     size:$('#c-size').value, warmup:+$('#c-warm').value, quality:+$('#c-q').value,
+    dark_check:$('#c-dark').checked, dark_ratio:+$('#c-darkr').value,
     wb_auto:$('#c-wba').checked, wb_temp:+$('#c-wb').value, exp_auto:$('#c-expa').checked, exposure:+$('#c-exp').value,
     brightness:+$('#c-br').value, contrast:+$('#c-co').value, saturation:+$('#c-sa').value, sharpness:+$('#c-sh').value,
     device:$('#c-dev').value.trim() || 'auto', input_format:$('#c-fmt').value, capture_mode:$('#c-mode').value, video_encoder:$('#c-enc').value };
