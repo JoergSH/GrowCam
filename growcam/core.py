@@ -23,9 +23,10 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 
 BASE = os.path.abspath(os.path.expanduser(os.environ.get("GROWCAM_DATA", "~/growcam")))
 CFG_FILE = os.path.join(BASE, "config.json")
@@ -302,12 +303,30 @@ def validate_cfg(new):
     return c
 
 
+_write_lock = threading.Lock()
+
+
+def write_json_atomic(path, data, indent=None):
+    """JSON atomar schreiben: eigene Zwischendatei je Aufruf, damit sich parallele
+    Speichervorgaenge (mehrere Browser, Doppelklick, Timer) nicht in die Quere kommen."""
+    d = os.path.dirname(path)
+    os.makedirs(d, exist_ok=True)
+    with _write_lock:
+        fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", suffix=".tmp", dir=d)
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(data, f, indent=indent)
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
+
+
 def save_cfg(c):
-    os.makedirs(BASE, exist_ok=True)
-    tmp = CFG_FILE + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(c, f, indent=2)
-    os.replace(tmp, CFG_FILE)
+    write_json_atomic(CFG_FILE, c, indent=2)
 
 
 def light_on(c, now=None):
@@ -507,10 +526,7 @@ def _load_bright():
 
 def _save_bright(st):
     try:
-        tmp = BRIGHT_FILE + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(st, f)
-        os.replace(tmp, BRIGHT_FILE)
+        write_json_atomic(BRIGHT_FILE, st)
     except OSError:
         pass
 
