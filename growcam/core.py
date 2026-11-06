@@ -26,7 +26,7 @@ import tempfile
 import threading
 import time
 
-VERSION = "1.3.1"
+VERSION = "1.3.2"
 
 BASE = os.path.abspath(os.path.expanduser(os.environ.get("GROWCAM_DATA", "~/growcam")))
 CFG_FILE = os.path.join(BASE, "config.json")

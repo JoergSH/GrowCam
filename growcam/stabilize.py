@@ -230,7 +230,8 @@ def align_all(progress=None, should_stop=None):
     c = core.load_cfg()
     first = start_day(c)
     todo_days = [d for d in days() if d >= first]
-    total = sum(len(images(d)) - len(load_day(d)["transforms"]) for d in todo_days)
+    # nur wirklich fehlende Bilder zaehlen (geloeschte Bilder koennen noch in den Tagesdaten stehen)
+    total = sum(sum(1 for n in images(d) if n not in load_day(d)["transforms"]) for d in todo_days)
     if total <= 0:
         return 0
     with Lock():
@@ -476,8 +477,9 @@ def info():
     cuts = []
     for d in ds:
         data = load_day(d)
-        aligned += len(data["transforms"])
-        total += len(images(d))
+        names = images(d)
+        aligned += sum(1 for n in names if n in data["transforms"])
+        total += len(names)
         cuts += [dict(x, day=d) for x in data.get("cuts", []) if x.get("reason") not in ("start",)]
     daily = sorted(f[len(DAILY_PREFIX):-4] for f in os.listdir(core.VID_DIR)
                    if f.startswith(DAILY_PREFIX) and f.endswith(".mp4")) if os.path.isdir(core.VID_DIR) else []
