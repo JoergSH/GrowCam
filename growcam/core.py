@@ -26,7 +26,7 @@ import tempfile
 import threading
 import time
 
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 
 BASE = os.path.abspath(os.path.expanduser(os.environ.get("GROWCAM_DATA", "~/growcam")))
 CFG_FILE = os.path.join(BASE, "config.json")
@@ -71,6 +71,7 @@ DEFAULTS = {
     "stab_fps": 24,            # Bilder/s der Tagesvideos
     "stab_width": 0,           # Breite der Tagesvideos (0 = empfohlen)
     "stab_overlay": True,      # Datum/Uhrzeit in Tagesvideos
+    "stab_roi": [],            # Ausrichtungsbereich [x0, y0, x1, y1] in Bildanteilen ([] = ganzes Bild)
 }
 
 # Kamera-Regler: Config-Schluessel -> (aktueller V4L2-Name, alter Name vor Kernel 5.x)
@@ -299,6 +300,16 @@ def validate_cfg(new):
     if "stab_start" in new and (new["stab_start"] == "" or
                                 re.match(r"^\d{4}-\d{2}-\d{2}$", str(new["stab_start"]))):
         c["stab_start"] = new["stab_start"]
+    if "stab_roi" in new:
+        r = new["stab_roi"]
+        if r == [] or r is None:
+            c["stab_roi"] = []
+        elif isinstance(r, list) and len(r) == 4:
+            x0, y0, x1, y1 = (min(1.0, max(0.0, float(v))) for v in r)
+            x0, x1 = sorted((x0, x1))
+            y0, y1 = sorted((y0, y1))
+            if x1 - x0 >= 0.05 and y1 - y0 >= 0.05:
+                c["stab_roi"] = [round(v, 4) for v in (x0, y0, x1, y1)]
     if "stab_fps" in new:
         c["stab_fps"] = _clamp(new["stab_fps"], 1, 60)
     if "stab_width" in new and int(new["stab_width"]) in (0, 640, 854, 1280, 1920, 2048):

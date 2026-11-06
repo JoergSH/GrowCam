@@ -45,7 +45,10 @@ def overlay_filter(files, fps, tmpdir):
         for i, f in enumerate(files):
             t = img_time(f)
             txt = f"{WEEKDAYS[t.weekday()]} {t:%d.%m.%Y  %H:%M}"
-            fh.write(f"{i+1}\n{srt_time(i/fps)} --> {srt_time((i+1)/fps)}\n{txt}\n\n")
+            # Zeitfenster um die Bildmitte legen: Bild i liegt bei i/fps, Rundung auf ms
+            # darf nicht dazu fuehren, dass ein Bild noch den vorigen Text zeigt
+            a, b = max(0.0, (i - 0.5) / fps), (i + 0.5) / fps
+            fh.write(f"{i+1}\n{srt_time(a)} --> {srt_time(b)}\n{txt}\n\n")
     return [f"subtitles={srt}:force_style='{OVERLAY_STYLE}'"]
 
 

@@ -80,6 +80,7 @@ Schon kleine Bewegungen der Kamera oder des Topfs lassen den Zeitraffer wackeln.
 - **Zusammenfügen:** Unter *Video → Stabilisierung & Tagesvideos* einen Zeitraum wählen. Die Tagesvideos werden ohne Neukodieren aneinandergehängt, das dauert auch auf schwacher Hardware nur Sekunden.
 - **Eigene Videos:** Beim normalen *Video erstellen* das Häkchen *Stabilisieren* setzen. Fps, Breite und jedes n-te Bild sind dann frei wählbar, die gespeicherten Ausrichtungen werden wiederverwendet.
 - **Kamera verstellt:** Lässt sich ein Bild mehrmals hintereinander nicht mehr ausrichten, legt GrowCam automatisch eine neue Referenz an. Einzelne Ausreißer (Hand im Bild) behalten die Lage des Bildes davor.
+- **Ausrichtungsbereich:** Bewegt sich im Hintergrund etwas unabhängig von deinem Topf (Nachbarbox umgestellt, Zeltwand), unter *Einstellungen* einen Rahmen um Topf bzw. Box aufziehen. Ausgerichtet wird dann nur an diesem Bereich.
 - **Starttag:** Tage, an denen die Kamera noch eingerichtet wurde, unter *Einstellungen* der Stabilisierung ausschließen (*Stabilisieren ab Tag*), danach *Neu ausrichten ab Starttag*.
 
 Braucht OpenCV (`python3-opencv`), das der Installer mitinstalliert, außer auf Pi 1 / Zero (dort mit `--stab` erzwingen, ist aber sehr langsam). Ohne OpenCV ist die Funktion einfach ausgeblendet. Von Hand: `python3 /opt/growcam/stabilize.py info | align | day JJJJ-MM-TT | nightly --force`.

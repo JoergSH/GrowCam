@@ -125,7 +125,7 @@ def _factor(w):
     return f
 
 
-def prep(path, f):
+def prep(path, f, roi=None):
     _cv()
     flag = {1: cv2.IMREAD_COLOR, 2: cv2.IMREAD_REDUCED_COLOR_2, 4: cv2.IMREAD_REDUCED_COLOR_4,
             8: cv2.IMREAD_REDUCED_COLOR_8}[f]
@@ -137,6 +137,12 @@ def prep(path, f):
     k = max(3, int(img.shape[1] / 80) | 1)
     green = cv2.dilate(green, np.ones((k, k), np.uint8))
     mask = cv2.bitwise_not(green)
+    if roi:
+        h, w = mask.shape
+        x0, y0, x1, y1 = roi
+        keep = np.zeros_like(mask)
+        keep[int(y0 * h):int(y1 * h), int(x0 * w):int(x1 * w)] = 255
+        mask = cv2.bitwise_and(mask, keep)
     g = cv2.GaussianBlur(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), (5, 5), 0).astype(np.float32)
     return g, mask
 
@@ -173,6 +179,7 @@ class Aligner:
         _cv()
         self.refs = load_refs()
         self.cache = {}
+        self.roi = core.load_cfg().get("stab_roi") or None
 
     def ref(self, rid=None):
         rs = self.refs["refs"]
@@ -183,7 +190,7 @@ class Aligner:
 
     def ref_prep(self, r):
         if r["id"] not in self.cache:
-            self.cache[r["id"]] = prep(os.path.join(STAB_DIR, r["file"]), r["f"])
+            self.cache[r["id"]] = prep(os.path.join(STAB_DIR, r["file"]), r["f"], self.roi)
         return self.cache[r["id"]]
 
     def new_ref(self, path, old=None):
@@ -207,7 +214,7 @@ class Aligner:
         return r
 
     def align_one(self, path, r, m_prev):
-        cur = prep(path, r["f"])
+        cur = prep(path, r["f"], self.roi)
         cc, m = ecc(self.ref_prep(r), cur, _small(m_prev, r["f"]))
         if cc < CC_MIN:
             cc2, m2 = ecc(self.ref_prep(r), cur, np.eye(2, 3, dtype=np.float32))
@@ -357,6 +364,15 @@ def render_video(files, out_path, fps, width, overlay, encoder=None, on_start=No
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+def reference_image():
+    """Bild zum Festlegen des Ausrichtungsbereichs: das neueste Bild (aktuelle Kameraposition)."""
+    for d in reversed(days()):
+        imgs = images(d)
+        if imgs:
+            return os.path.join(core.IMG_DIR, d, imgs[-1])
+    return None
+
+
 def daily_params(c):
     return {"fps": int(c["stab_fps"]), "width": int(c["stab_width"] or core.recommended_width()),
             "overlay": bool(c["stab_overlay"])}
@@ -466,7 +482,7 @@ def info():
     daily = sorted(f[len(DAILY_PREFIX):-4] for f in os.listdir(core.VID_DIR)
                    if f.startswith(DAILY_PREFIX) and f.endswith(".mp4")) if os.path.isdir(core.VID_DIR) else []
     return {"available": available(), "nightly": c.get("stab_nightly", True), "start": first,
-            "refs": len(refs), "aligned": aligned, "total": total, "cuts": cuts,
+            "roi": c.get("stab_roi") or [], "refs": len(refs), "aligned": aligned, "total": total, "cuts": cuts,
             "daily": daily, "state": _load(STATE_FILE, {})}
 
 

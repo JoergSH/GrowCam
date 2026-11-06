@@ -491,6 +491,11 @@ class H(BaseHTTPRequestHandler):
                 return self.send_json(list_videos())
             if path == "/api/stab":
                 return self.send_json(stabilize.info())
+            if path == "/stab/reference.jpg":
+                f = stabilize.reference_image()
+                if not f:
+                    return self.send_err(404, "noch kein Bild")
+                return self.send_file(f)
             if path == "/api/video/status":
                 return self.send_json(job_snapshot())
             if path == "/api/preview.jpg":
