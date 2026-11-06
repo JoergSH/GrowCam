@@ -26,7 +26,7 @@ import tempfile
 import threading
 import time
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 BASE = os.path.abspath(os.path.expanduser(os.environ.get("GROWCAM_DATA", "~/growcam")))
 CFG_FILE = os.path.join(BASE, "config.json")
@@ -66,6 +66,11 @@ DEFAULTS = {
     "dark_check": True,        # dunkle Ausreisser erkennen und neu aufnehmen
     "dark_ratio": 50,          # % der ueblichen Helligkeit, darunter gilt ein Bild als zu dunkel
     "dark_retries": 2,         # neue Versuche, bevor ein Bild aussortiert wird
+    "stab_nightly": True,      # in der Dunkelphase Tage ausrichten + Tagesvideo rendern (braucht OpenCV)
+    "stab_start": "",          # erster Tag fuer die Stabilisierung ("" = erster vorhandener Tag)
+    "stab_fps": 24,            # Bilder/s der Tagesvideos
+    "stab_width": 0,           # Breite der Tagesvideos (0 = empfohlen)
+    "stab_overlay": True,      # Datum/Uhrzeit in Tagesvideos
 }
 
 # Kamera-Regler: Config-Schluessel -> (aktueller V4L2-Name, alter Name vor Kernel 5.x)
@@ -291,7 +296,14 @@ def validate_cfg(new):
         c["dark_ratio"] = _clamp(new["dark_ratio"], 10, 90)
     if "dark_retries" in new:
         c["dark_retries"] = _clamp(new["dark_retries"], 0, 5)
-    for k in ("wb_auto", "exp_auto", "dark_check"):
+    if "stab_start" in new and (new["stab_start"] == "" or
+                                re.match(r"^\d{4}-\d{2}-\d{2}$", str(new["stab_start"]))):
+        c["stab_start"] = new["stab_start"]
+    if "stab_fps" in new:
+        c["stab_fps"] = _clamp(new["stab_fps"], 1, 60)
+    if "stab_width" in new and int(new["stab_width"]) in (0, 640, 854, 1280, 1920, 2048):
+        c["stab_width"] = int(new["stab_width"])
+    for k in ("wb_auto", "exp_auto", "dark_check", "stab_nightly", "stab_overlay"):
         if k in new:
             c[k] = bool(new[k])
     rng = None

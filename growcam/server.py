@@ -4,12 +4,10 @@ Start: python3 server.py [port]   -> http://<ip>:8080
 Umgebung: GROWCAM_PORT (Standard 8080), GROWCAM_BIND (Standard 0.0.0.0), GROWCAM_DATA
 """
 import datetime
-import functools
 import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 import threading
@@ -19,6 +17,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import core  # noqa: E402
+import render  # noqa: E402
+import stabilize  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(HERE, "static")
@@ -174,117 +174,74 @@ def make_thumb(day, name):
         return core.make_thumb(src, dst) or src
 
 
-@functools.lru_cache(maxsize=8)
-def has_filter(name):
-    try:
-        r = subprocess.run(["ffmpeg", "-nostdin", "-hide_banner", "-filters"], capture_output=True,
-                           text=True, timeout=10)
-        return f" {name} " in r.stdout
-    except Exception:  # noqa
-        return False
-
-
-def srt_time(t):
-    ms = int(round(t * 1000))
-    h, ms = divmod(ms, 3600000)
-    m, ms = divmod(ms, 60000)
-    s, ms = divmod(ms, 1000)
-    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-
-
 # ---------------------------------------------------------------- video job
-ENC_BITRATE = {640: "2M", 854: "3M", 1280: "5M", 1920: "8M", 2048: "10M"}
-
-
-def encode_cmd(tmpdir, fps, width, src_w, vf_extra, encoder, part):
-    weak = core.hw_profile()["weak"]
-    inp = []
-    # JPEGs verkleinert dekodieren, wenn das Ziel ohnehin viel kleiner ist (spart viel CPU)
-    lowres = 0
-    while src_w and lowres < 2 and src_w / (2 ** (lowres + 1)) >= width:
-        lowres += 1
-    if lowres:
-        inp = ["-lowres", str(lowres)]
-    if encoder == "h264_v4l2m2m":
-        # Pi-Hardware-Encoder: max. 1920x1080
-        vf = [f"scale=w={width}:h=1080:force_original_aspect_ratio=decrease:force_divisible_by=2"]
-        enc = ["-c:v", "h264_v4l2m2m", "-b:v", ENC_BITRATE.get(width, "6M")]
-    else:
-        vf = [f"scale={width}:-2"]
-        enc = ["-c:v", "libx264", "-preset", "ultrafast" if weak else "veryfast", "-crf", "21"]
-        if weak:
-            enc += ["-threads", "1"]
-    vf.append("format=yuv420p")
-    vf += vf_extra
-    return (["nice", "-n", "10", "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
-             "-nostats", "-progress", "pipe:1", "-y", "-framerate", str(fps)] + inp +
-            ["-i", os.path.join(tmpdir, "f%06d.jpg"), "-vf", ",".join(vf)] + enc +
-            ["-movflags", "+faststart", part])
-
-
-def run_encode(cmd):
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+def _set_pid(pid):
     with job_lock:
-        job["pid"] = p.pid
+        job["pid"] = pid
         job["done"] = 0
-    for line in p.stdout:
-        if line.startswith("frame="):
-            try:
-                n = int(line.split("=", 1)[1])
-            except ValueError:
-                continue
-            with job_lock:
-                job["done"] = n
-    err = p.stderr.read()
-    p.wait()
-    return p.returncode, err
 
 
-def video_worker(files, fps, width, overlay, out_name):
+def _set_done(n):
+    with job_lock:
+        job["done"] = n
+
+
+def _cancelled():
+    with job_lock:
+        return job.get("state") == "cancelled"
+
+
+def _finish(rc, err, out_name, n):
+    if rc == 0:
+        with job_lock:
+            job.update(state="done", done=n, file=out_name, finished=time.strftime("%H:%M:%S"))
+    else:
+        with job_lock:
+            if job.get("state") != "cancelled":
+                job.update(state="error", error=(err or "ffmpeg Fehler")[-500:])
+
+
+def video_worker(files, fps, width, overlay, out_name, stab=False):
     tmpdir = tempfile.mkdtemp(prefix="growcam_vid_")
     try:
-        for i, f in enumerate(files):
-            os.symlink(f, os.path.join(tmpdir, f"f{i:06d}.jpg"))
-        vf = []
-        if overlay and has_filter("subtitles"):
-            srt = os.path.join(tmpdir, "t.srt")
-            with open(srt, "w") as fh:
-                for i, f in enumerate(files):
-                    t = img_time(os.path.basename(f))
-                    txt = f"{WEEKDAYS[t.weekday()]} {t:%d.%m.%Y  %H:%M}"
-                    fh.write(f"{i+1}\n{srt_time(i/fps)} --> {srt_time((i+1)/fps)}\n{txt}\n\n")
-            style = ("FontName=DejaVu Sans,FontSize=11,PrimaryColour=&H00FFFFFF,"
-                     "OutlineColour=&H00000000,BorderStyle=1,Outline=1,Shadow=0,"
-                     "Alignment=3,MarginR=8,MarginV=6")
-            vf.append(f"subtitles={srt}:force_style='{style}'")
         out = os.path.join(core.VID_DIR, out_name)
-        part = out + ".part.mp4"
         os.makedirs(core.VID_DIR, exist_ok=True)
-        src_w, _ = core.jpeg_size(files[0])
         encoder = core.video_encoder()
         with job_lock:
             job["encoder"] = encoder
-        rc, err = run_encode(encode_cmd(tmpdir, fps, width, src_w, vf, encoder, part))
-        with job_lock:
-            cancelled = job.get("state") == "cancelled"
-        if rc != 0 and not cancelled and encoder != "libx264":
+        if stab:
+            # noch nicht ausgerichtete Bilder (z. B. von heute) zuerst ausrichten
+            def prog(a, b):
+                with job_lock:
+                    job.update(phase="align", done=a, total_align=b)
+            with job_lock:
+                job.update(phase="align", done=0)
+            stabilize.align_all(progress=prog, should_stop=_cancelled)
+            if _cancelled():
+                return
+            with job_lock:
+                job.update(phase="encode", done=0)
+            rc, err = stabilize.render_video(files, out, fps, width, overlay, encoder,
+                                             _set_pid, _set_done)
+            return _finish(rc, err, out_name, len(files))
+        for i, f in enumerate(files):
+            os.symlink(f, os.path.join(tmpdir, f"f{i:06d}.jpg"))
+        vf = render.overlay_filter(files, fps, tmpdir) if overlay else []
+        part = out + ".part.mp4"
+        src_w, _ = core.jpeg_size(files[0])
+        rc, err = render.run(render.jpeg_cmd(tmpdir, fps, width, src_w, vf, encoder, part),
+                             _set_pid, _set_done)
+        if rc != 0 and not _cancelled() and encoder != "libx264":
             # Hardware-Encoder gescheitert -> Software-Fallback
             with job_lock:
                 job["encoder"] = "libx264"
-            rc, err = run_encode(encode_cmd(tmpdir, fps, width, src_w, vf, "libx264", part))
-            with job_lock:
-                cancelled = job.get("state") == "cancelled"
+            rc, err = render.run(render.jpeg_cmd(tmpdir, fps, width, src_w, vf, "libx264", part),
+                                 _set_pid, _set_done)
         if rc == 0 and os.path.exists(part):
             os.replace(part, out)
-            with job_lock:
-                job.update(state="done", done=len(files), file=out_name,
-                           finished=time.strftime("%H:%M:%S"))
-        else:
-            if os.path.exists(part):
-                os.remove(part)
-            with job_lock:
-                if not cancelled:
-                    job.update(state="error", error=(err or "ffmpeg Fehler")[-500:])
+        elif os.path.exists(part):
+            os.remove(part)
+        _finish(rc, err, out_name, len(files))
     except Exception as e:  # noqa
         with job_lock:
             job.update(state="error", error=str(e))
@@ -292,46 +249,102 @@ def video_worker(files, fps, width, overlay, out_name):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def start_video(p):
-    with job_lock:
-        if job.get("state") == "running":
-            return {"ok": False, "error": "Es läuft bereits ein Video-Auftrag."}
+def concat_worker(files, out_name):
+    out = os.path.join(core.VID_DIR, out_name)
+    part = out + ".part.mp4"
+    try:
+        rc, err = render.concat(files, part)
+        if rc == 0:
+            os.replace(part, out)
+        elif os.path.exists(part):
+            os.remove(part)
+        _finish(rc, err, out_name, len(files))
+    except Exception as e:  # noqa
+        with job_lock:
+            job.update(state="error", error=str(e))
+
+
+def _range(p):
     day_from = p.get("from") or None
     day_to = p.get("to") or None
     for d in (day_from, day_to):
         if d and not DAY_RE.match(d):
-            return {"ok": False, "error": "Ungültiges Datum"}
+            raise ValueError("Ungültiges Datum")
+    return day_from, day_to
+
+
+def _busy():
+    with job_lock:
+        return job.get("state") == "running"
+
+
+def start_video(p):
+    if _busy():
+        return {"ok": False, "error": "Es läuft bereits ein Video-Auftrag."}
+    try:
+        day_from, day_to = _range(p)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
     fps = max(1, min(60, int(p.get("fps", 24))))
     width = int(p.get("width", core.recommended_width()))
     if width not in (640, 854, 1280, 1920, 2048):
         width = core.recommended_width()
     nth = max(1, min(100, int(p.get("nth", 1))))
     overlay = bool(p.get("overlay", True))
+    stab = bool(p.get("stabilize")) and stabilize.available()
     files = all_images(day_from, day_to)[::nth]
     if len(files) < 2:
         return {"ok": False, "error": "Zu wenige Bilder im gewählten Zeitraum."}
     a = os.path.basename(os.path.dirname(files[0]))
     b = os.path.basename(os.path.dirname(files[-1]))
-    out_name = f"growcam_{a}_bis_{b}_{fps}fps_{time.strftime('%H%M%S')}.mp4"
+    out_name = f"growcam_{a}_bis_{b}_{fps}fps{'_stab' if stab else ''}_{time.strftime('%H%M%S')}.mp4"
     with job_lock:
         job.clear()
-        job.update(state="running", total=len(files), done=0, file=out_name,
-                   started=time.strftime("%H:%M:%S"), seconds=round(len(files) / fps, 1))
-    threading.Thread(target=video_worker, args=(files, fps, width, overlay, out_name),
+        job.update(state="running", phase="encode", total=len(files), done=0, file=out_name,
+                   stab=stab, started=time.strftime("%H:%M:%S"), seconds=round(len(files) / fps, 1))
+    threading.Thread(target=video_worker, args=(files, fps, width, overlay, out_name, stab),
+                     daemon=True).start()
+    return {"ok": True, "job": job_snapshot()}
+
+
+def start_concat(p):
+    """Tagesvideos (videos/tag_*.mp4) ohne Neukodieren zusammenfuegen."""
+    if _busy():
+        return {"ok": False, "error": "Es läuft bereits ein Video-Auftrag."}
+    try:
+        day_from, day_to = _range(p)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    sel = [d for d in stabilize.info()["daily"]
+           if (not day_from or d >= day_from) and (not day_to or d <= day_to)]
+    if not sel:
+        return {"ok": False, "error": "Keine Tagesvideos im gewählten Zeitraum."}
+    prm = {json.dumps({k: v for k, v in (stabilize.load_day(d).get("video") or {}).items()
+                       if k in ("fps", "width", "overlay")}, sort_keys=True) for d in sel}
+    if len(prm) > 1:
+        return {"ok": False, "error": "Die Tagesvideos wurden mit unterschiedlichen Einstellungen "
+                                      "erstellt. Sie werden in der nächsten Nacht angeglichen."}
+    out_name = f"growcam_{sel[0]}_bis_{sel[-1]}_tage_{time.strftime('%H%M%S')}.mp4"
+    with job_lock:
+        job.clear()
+        job.update(state="running", phase="concat", total=len(sel), done=0, file=out_name,
+                   started=time.strftime("%H:%M:%S"), seconds=None)
+    threading.Thread(target=concat_worker, args=([stabilize.daily_path(d) for d in sel], out_name),
                      daemon=True).start()
     return {"ok": True, "job": job_snapshot()}
 
 
 def cancel_video():
     with job_lock:
-        if job.get("state") != "running" or not job.get("pid"):
+        if job.get("state") != "running":
             return {"ok": False}
         job["state"] = "cancelled"
-        pid = job["pid"]
-    try:
-        os.kill(pid, 15)
-    except OSError:
-        pass
+        pid = job.get("pid")
+    if pid:
+        try:
+            os.kill(pid, 15)
+        except OSError:
+            pass
     return {"ok": True}
 
 
@@ -339,12 +352,16 @@ def list_videos():
     if not os.path.isdir(core.VID_DIR):
         return []
     out = []
-    for f in sorted(os.listdir(core.VID_DIR), reverse=True):
+    for f in os.listdir(core.VID_DIR):
         if VID_RE.match(f) and not f.endswith(".part.mp4"):
             st = os.stat(os.path.join(core.VID_DIR, f))
-            out.append({"name": f, "size": st.st_size,
+            out.append({"name": f, "size": st.st_size, "daily": f.startswith(stabilize.DAILY_PREFIX),
+                        "mtime": st.st_mtime,
                         "date": time.strftime("%d.%m.%Y %H:%M", time.localtime(st.st_mtime))})
-    return out
+    # eigene Videos (neueste zuerst), danach die Tagesvideos (neuester Tag zuerst)
+    out.sort(key=lambda v: (v["daily"], -v["mtime"] if not v["daily"] else 0, v["name"]), reverse=False)
+    daily = sorted((v for v in out if v["daily"]), key=lambda v: v["name"], reverse=True)
+    return [v for v in out if not v["daily"]] + daily
 
 
 def config_info():
@@ -472,6 +489,8 @@ class H(BaseHTTPRequestHandler):
                                        for f in list_images(day)])
             if path == "/api/videos":
                 return self.send_json(list_videos())
+            if path == "/api/stab":
+                return self.send_json(stabilize.info())
             if path == "/api/video/status":
                 return self.send_json(job_snapshot())
             if path == "/api/preview.jpg":
@@ -528,6 +547,17 @@ class H(BaseHTTPRequestHandler):
                 return self.send_json({"ok": True})
             if path == "/api/video":
                 return self.send_json(start_video(p))
+            if path == "/api/video/concat":
+                return self.send_json(start_concat(p))
+            if path == "/api/stab/reset":
+                start = p.get("start", "")
+                if start and not DAY_RE.match(start):
+                    return self.send_err(400, "start")
+                try:
+                    stabilize.reset(start)
+                except RuntimeError as e:
+                    return self.send_json({"ok": False, "error": str(e)})
+                return self.send_json({"ok": True})
             if path == "/api/video/cancel":
                 return self.send_json(cancel_video())
             if path == "/api/video/delete":

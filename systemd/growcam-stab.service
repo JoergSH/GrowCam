@@ -1,0 +1,11 @@
+[Unit]
+Description=GrowCam Bildstabilisierung + Tagesvideos (laeuft nur bei Licht aus)
+
+[Service]
+Type=oneshot
+User=@USER@
+EnvironmentFile=@ENVFILE@
+ExecStart=/usr/bin/python3 @APPDIR@/stabilize.py nightly
+Nice=15
+IOSchedulingClass=idle
+TimeoutStartSec=6h

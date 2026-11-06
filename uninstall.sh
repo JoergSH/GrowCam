@@ -37,8 +37,9 @@ if [ -f "$ENVFILE" ]; then
 fi
 
 echo "==> Stoppe und entferne Dienste${NAME:+ der Instanz $NAME}"
-$SUDO $SYSTEMCTL disable --now "growcam$SFX-capture.timer" "growcam$SFX-web.service" 2>/dev/null || true
-$SUDO rm -f "$UNITDIR/growcam$SFX-web.service" "$UNITDIR/growcam$SFX-capture.service" "$UNITDIR/growcam$SFX-capture.timer"
+$SUDO $SYSTEMCTL disable --now "growcam$SFX-capture.timer" "growcam$SFX-stab.timer" "growcam$SFX-web.service" 2>/dev/null || true
+$SUDO rm -f "$UNITDIR/growcam$SFX-web.service" "$UNITDIR/growcam$SFX-capture.service" "$UNITDIR/growcam$SFX-capture.timer" \
+            "$UNITDIR/growcam$SFX-stab.service" "$UNITDIR/growcam$SFX-stab.timer"
 $SUDO $SYSTEMCTL daemon-reload
 $SUDO rm -f "$ENVFILE"
 

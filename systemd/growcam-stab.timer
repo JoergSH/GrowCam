@@ -1,0 +1,10 @@
+[Unit]
+Description=GrowCam: stuendlich pruefen, ob Tage stabilisiert werden koennen
+
+[Timer]
+OnCalendar=*-*-* *:20:00
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

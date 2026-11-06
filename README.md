@@ -10,11 +10,12 @@
 - **Zeitplan:** Intervall (1–60 min) und Lichtzeiten (auch über Mitternacht, z. B. 18–12 Uhr)
 - **Galerie** nach Tagen, mit Lücken-Erkennung (Kamera ausgefallen?), Lightbox und Download
 - **Video erstellen** im Browser: Zeitraum, fps, Breite, jedes n-te Bild, Datum/Uhrzeit-Einblendung
+- **Bildstabilisierung (optional):** gleicht kleine Verschiebungen aus (Topf angestoßen, Zelt gewackelt, Autofokus). In der Dunkelphase entsteht automatisch ein stabilisiertes Video pro Tag, mehrere Tage werden in Sekunden zusammengefügt.
 - **Bildeinstellungen:** Weißabgleich und Belichtung fest einstellbar (wichtig, damit das Video nicht flackert), dazu Helligkeit, Kontrast, Sättigung und Schärfe. Die Bereiche liest GrowCam direkt aus der Kamera.
 - **Lichtaussetzer erkennen:** Ist ein Bild deutlich dunkler als die vorherigen, nimmt GrowCam nach 20 s neu auf. Bleibt es dunkel, wird es aussortiert (Ordner `dark/`) und im Fehlerprotokoll vermerkt, damit es nicht im Video landet.
 - **Statusanzeige:** freier Speicher, Anzahl Tage, für die der Platz noch reicht, Warnung, wenn keine Bilder mehr kommen, Fehlerprotokoll
 - **Touch-tauglich:** auch als feste Anzeige am Growzelt nutzbar
-- **Ohne Abhängigkeiten:** nur Python-Standardbibliothek, `ffmpeg` und `v4l-utils`, kein pip, keine Cloud
+- **Ohne Abhängigkeiten:** nur Python-Standardbibliothek, `ffmpeg` und `v4l-utils` (für die Stabilisierung zusätzlich `python3-opencv`), kein pip, keine Cloud
 
 ## Installation
 
@@ -40,6 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/JoergSH/GrowCam/main/install.sh | b
 | `--user-service` | ohne Root/sudo installieren, als systemd-Benutzerdienst (Pakete müssen schon vorhanden sein) | – |
 | `--name NAME` | weitere Instanz für eine zusätzliche Kamera | – |
 | `--device PFAD` | Kamera fest zuordnen (`/dev/v4l/by-id/...`) | automatisch |
+| `--stab` / `--no-stab` | Bildstabilisierung (OpenCV) installieren bzw. weglassen | an, außer Pi 1 / Zero |
 | `--no-start` | nur installieren, nicht starten | – |
 
 Alternativ aus dem geklonten Repo:
@@ -69,6 +71,18 @@ curl -fsSL https://raw.githubusercontent.com/JoergSH/GrowCam/main/install.sh | b
 ```
 
 Entfernen einer Instanz: `uninstall.sh --name wurzeln`. Die anderen Instanzen laufen weiter.
+
+## Bildstabilisierung
+
+Schon kleine Bewegungen der Kamera oder des Topfs lassen den Zeitraffer wackeln. GrowCam richtet deshalb alle Bilder auf ein gemeinsames Referenzbild aus. Die Pflanze selbst (alles Grüne) wird dabei ignoriert, ausgerichtet wird am Hintergrund: Topf, Zeltwand, Technik.
+
+- **Nachtlauf:** Sobald das Licht aus ist, richtet GrowCam die neuen Bilder aus und rendert für jeden abgeschlossenen Tag ein stabilisiertes Tagesvideo (`videos/tag_JJJJ-MM-TT.mp4`). Jedes Bild wird nur einmal ausgerichtet, die Ergebnisse liegen in `stab/`.
+- **Zusammenfügen:** Unter *Video → Stabilisierung & Tagesvideos* einen Zeitraum wählen. Die Tagesvideos werden ohne Neukodieren aneinandergehängt, das dauert auch auf schwacher Hardware nur Sekunden.
+- **Eigene Videos:** Beim normalen *Video erstellen* das Häkchen *Stabilisieren* setzen. Fps, Breite und jedes n-te Bild sind dann frei wählbar, die gespeicherten Ausrichtungen werden wiederverwendet.
+- **Kamera verstellt:** Lässt sich ein Bild mehrmals hintereinander nicht mehr ausrichten, legt GrowCam automatisch eine neue Referenz an. Einzelne Ausreißer (Hand im Bild) behalten die Lage des Bildes davor.
+- **Starttag:** Tage, an denen die Kamera noch eingerichtet wurde, unter *Einstellungen* der Stabilisierung ausschließen (*Stabilisieren ab Tag*), danach *Neu ausrichten ab Starttag*.
+
+Braucht OpenCV (`python3-opencv`), das der Installer mitinstalliert, außer auf Pi 1 / Zero (dort mit `--stab` erzwingen, ist aber sehr langsam). Ohne OpenCV ist die Funktion einfach ausgeblendet. Von Hand: `python3 /opt/growcam/stabilize.py info | align | day JJJJ-MM-TT | nightly --force`.
 
 ## Hardware
 
@@ -116,9 +130,10 @@ sudo apt-get update
 ```
 /opt/growcam/              Programm (core.py, server.py, static/)
 /etc/default/growcam       GROWCAM_DATA, GROWCAM_PORT
-~/growcam/                 config.json, images/JJJJ-MM-TT/, thumbs/, videos/, error.log
+~/growcam/                 config.json, images/JJJJ-MM-TT/, thumbs/, videos/, stab/, error.log
 growcam-web.service        Weboberfläche
 growcam-capture.timer      prüft jede Minute, ob ein Bild fällig ist
+growcam-stab.timer         stündlich: bei Licht aus ausrichten + Tagesvideos rendern
 ```
 
 ```bash
@@ -132,7 +147,7 @@ Die Weboberfläche hat **keine Anmeldung**. Sie ist fürs Heimnetz gedacht, also
 
 ## English summary
 
-GrowCam is a plant time-lapse camera with a web UI for any Linux box with a USB (UVC) webcam, from a Raspberry Pi 1 up to a PC. It captures only while the grow light is on, shows a gallery per day with gap detection, and renders time-lapse videos in the browser (date overlay, fps, width, every n-th frame). It has no dependencies beyond the Python standard library, `ffmpeg` and `v4l-utils`.
+GrowCam is a plant time-lapse camera with a web UI for any Linux box with a USB (UVC) webcam, from a Raspberry Pi 1 up to a PC. It captures only while the grow light is on, shows a gallery per day with gap detection, and renders time-lapse videos in the browser (date overlay, fps, width, every n-th frame). It has no dependencies beyond the Python standard library, `ffmpeg` and `v4l-utils`. Optional image stabilisation (OpenCV): during the dark period every frame is aligned to a common reference and a stabilised video per day is rendered; days can be joined in seconds without re-encoding.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JoergSH/GrowCam/main/install.sh | bash

@@ -59,6 +59,9 @@ input[type=checkbox]{accent-color:var(--accent);width:18px;height:18px}
 .vids{display:grid;gap:10px}
 .vid{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
 .vid .n{font-size:13px;word-break:break-all}
+.badge{display:inline-block;background:var(--chip);color:var(--accent);font-size:11px;font-weight:600;padding:1px 7px;border-radius:6px;margin-right:4px}
+details summary{cursor:pointer;color:var(--muted);font-size:14px}
+code{background:var(--chip);padding:1px 6px;border-radius:5px;font-size:13px}
 video{width:100%;border-radius:10px;background:#000;margin-top:10px}
 .muted{color:var(--muted);font-size:13px}
 .warnbox{background:color-mix(in srgb,var(--warn) 15%,transparent);border:1px solid var(--warn);color:var(--ink);border-radius:10px;padding:10px 14px;margin-bottom:16px;display:none}
@@ -135,6 +138,7 @@ video{width:100%;border-radius:10px;background:#000;margin-top:10px}
           <select id="vw"><option value="1920" selected>1920 (Full HD)</option><option value="1280">1280 (HD)</option><option value="854">854</option><option value="2048">2048 (voll)</option></select></label>
         <label class="f"><span>Jedes n-te Bild</span><input id="vnth" type="number" min="1" max="100" value="1"></label>
         <label class="check" style="align-self:end"><input id="vov" type="checkbox" checked> Datum &amp; Uhrzeit einblenden</label>
+        <label class="check stab-only" style="align-self:end"><input id="vstab" type="checkbox"> Stabilisieren</label>
       </div>
       <p class="muted" id="vest"></p>
       <div class="row">
@@ -144,6 +148,38 @@ video{width:100%;border-radius:10px;background:#000;margin-top:10px}
       <div id="vprog" style="display:none;margin-top:14px">
         <div class="bar"><div id="vbar"></div></div>
         <p class="muted" id="vtxt" style="margin:6px 0 0"></p>
+      </div>
+    </div>
+    <div class="card" id="stabcard">
+      <h2>Stabilisierung &amp; Tagesvideos</h2>
+      <p class="muted" id="stabinfo"></p>
+      <div class="stab-only">
+        <div class="form">
+          <label class="f"><span>Tagesvideos von</span><select id="cfrom"></select></label>
+          <label class="f"><span>bis</span><select id="cto"></select></label>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button class="btn primary" id="vcat">Tagesvideos zusammenfügen</button>
+          <span class="muted" id="vcatest"></span>
+        </div>
+        <details style="margin-top:14px">
+          <summary>Einstellungen</summary>
+          <div class="form" style="margin-top:10px">
+            <label class="check" style="grid-column:1/-1"><input id="s-night" type="checkbox"> In der Dunkelphase automatisch ausrichten und Tagesvideo erstellen</label>
+            <label class="f"><span>Stabilisieren ab Tag</span><select id="s-start"></select></label>
+            <label class="f"><span>Bilder pro Sekunde</span>
+              <select id="s-fps"><option>12</option><option>15</option><option>24</option><option>30</option><option>60</option></select></label>
+            <label class="f"><span>Breite</span>
+              <select id="s-w"><option value="0">Automatisch</option><option value="1920">1920 (Full HD)</option><option value="1280">1280 (HD)</option><option value="854">854</option><option value="2048">2048</option></select></label>
+            <label class="check"><input id="s-ov" type="checkbox"> Datum &amp; Uhrzeit einblenden</label>
+          </div>
+          <p class="muted">Alle Bilder werden auf ein gemeinsames Referenzbild ausgerichtet. Wurde die Kamera absichtlich verstellt, beginnt GrowCam automatisch mit einer neuen Referenz. Tage vor dem Starttag (z.&nbsp;B. während du die Kamera noch eingerichtet hast) werden ausgelassen. Geänderte Video-Einstellungen gelten ab der nächsten Nacht für alle Tagesvideos.</p>
+          <div class="row">
+            <button class="btn primary" id="s-save">Speichern</button>
+            <button class="btn" id="s-reset">Neu ausrichten ab Starttag</button>
+            <span class="muted" id="s-msg"></span>
+          </div>
+        </details>
       </div>
     </div>
     <div class="card">
@@ -258,7 +294,7 @@ function showTab(t){
   try { localStorage.setItem('growcam-tab', t); } catch(e){}
   if (t !== 'live') stopPreview();
   if (t==='gallery') loadDays();
-  if (t==='video') { loadDays(); loadVideos(); }
+  if (t==='video') { loadDays().then(loadStab); loadVideos(); }
   if (t==='settings') loadCfg();
 }
 $('#nav').onclick = e => { if (e.target.dataset.t) showTab(e.target.dataset.t); };
@@ -392,7 +428,7 @@ function estVideo(){
 ['#vfrom','#vto','#vfps','#vnth'].forEach(s => $(s).oninput = estVideo);
 $('#vstart').onclick = async () => {
   const j = await api('/api/video', {from:$('#vfrom').value, to:$('#vto').value, fps:+$('#vfps').value,
-    width:+$('#vw').value, nth:+$('#vnth').value, overlay:$('#vov').checked});
+    width:+$('#vw').value, nth:+$('#vnth').value, overlay:$('#vov').checked, stabilize:$('#vstab').checked});
   if (!j.ok) return toast(j.error || 'Fehler'); showJob(j.job); pollJob();
 };
 $('#vcancel').onclick = () => api('/api/video/cancel', {});
@@ -400,16 +436,19 @@ let polling = false;
 async function pollJob(){
   if (polling) return; polling = true;
   while (true) { const j = await api('/api/video/status'); showJob(j); if (j.state !== 'running') break; await new Promise(r => setTimeout(r, 1500)); }
-  polling = false; loadVideos();
+  polling = false; loadVideos(); loadStab();
 }
 function showJob(j){
   const run = j.state === 'running';
-  $('#vstart').disabled = run; $('#vcancel').style.display = run ? '' : 'none';
+  $('#vstart').disabled = run; $('#vcat').disabled = run; $('#vcancel').style.display = run ? '' : 'none';
+  if (run && j.phase==='concat') $('#vprog').scrollIntoView({behavior:'smooth', block:'nearest'});
   if (j.state === 'idle' || !j.state) { $('#vprog').style.display = 'none'; return; }
   $('#vprog').style.display = '';
   const p = j.total ? Math.min(100, 100 * (j.done||0) / j.total) : 0;
   $('#vbar').style.width = (j.state==='done' ? 100 : p) + '%';
-  $('#vtxt').textContent = run ? `Erstelle Video … ${j.done||0} / ${j.total} Bilder (${p.toFixed(0)} %)`
+  $('#vtxt').textContent = run && j.phase==='align' ? `Richte Bilder aus … ${j.done||0} / ${j.total_align||'?'}`
+    : run && j.phase==='concat' ? `Füge ${j.total} Tagesvideos zusammen …`
+    : run ? `Erstelle Video … ${j.done||0} / ${j.total} Bilder (${p.toFixed(0)} %)`
     : j.state==='done' ? `Fertig: ${j.file} (${j.seconds} s)` : j.state==='cancelled' ? 'Abgebrochen.' : 'Fehler: ' + (j.error||'');
   if (run && !polling) pollJob();
 }
@@ -418,13 +457,61 @@ async function loadVideos(){
   if (!v.length) box.innerHTML = '<span class="muted">Noch keine Videos.</span>';
   v.forEach(x => {
     const d = document.createElement('div'); d.className = 'vid';
-    d.innerHTML = `<div><div class="n">${x.name}</div><div class="muted">${x.date} · ${fmtB(x.size)}</div></div>
+    d.innerHTML = `<div><div class="n">${x.daily ? '<span class="badge">Tagesvideo</span> ' : ''}${x.name}</div><div class="muted">${x.date} · ${fmtB(x.size)}</div></div>
       <div class="row"><button class="btn" data-a="play">Abspielen</button><a class="btn" href="/videos/${x.name}?dl=1">Download</a><button class="btn danger" data-a="del">Löschen</button></div>`;
     d.querySelector('[data-a=play]').onclick = () => { const p = $('#player'); p.style.display = ''; p.src = '/videos/' + x.name; p.play(); p.scrollIntoView({behavior:'smooth'}); };
     d.querySelector('[data-a=del]').onclick = async () => { if (!confirm('Video löschen?')) return; await api('/api/video/delete', {name:x.name}); loadVideos(); };
     box.appendChild(d);
   });
 }
+
+// ---------- stabilisierung
+let STAB = null, stabInit = false;
+async function loadStab(){
+  const s = await api('/api/stab'); STAB = s; if (!s || s.available === undefined) return;
+  document.querySelectorAll('.stab-only').forEach(e => e.style.display = s.available ? '' : 'none');
+  if (!s.available) {
+    $('#stabinfo').innerHTML = 'Für die Bildstabilisierung fehlt OpenCV. Einmalig installieren:<br><code>sudo apt install python3-opencv</code><br>Danach GrowCam neu starten bzw. den Installer erneut ausführen.';
+    $('#vstab').checked = false; return;
+  }
+  if (!stabInit) { $('#vstab').checked = true; stabInit = true; }
+  const st = s.state || {}, c = s.cuts || [];
+  const fmt = d => d ? d.split('-').reverse().join('.') : '–';
+  $('#stabinfo').innerHTML = `Ausgerichtet: <b>${s.aligned}</b> von ${s.total} Bildern ab ${fmt(s.start)} · Tagesvideos: <b>${s.daily.length}</b>` +
+    (st.running ? ' · <b>läuft gerade …</b>' : st.finished ? ` · letzter Lauf ${st.finished.slice(8,10)}.${st.finished.slice(5,7)}. ${st.finished.slice(11,16)}` : '') +
+    (st.error ? `<br>⚠ ${st.error}` : '') +
+    (c.length ? `<br>Neue Referenz (Kamera verstellt): ${c.map(x => fmt(x.day) + ' ' + x.at.slice(9,11) + ':' + x.at.slice(11,13)).join(', ')}` : '') +
+    (s.nightly ? '' : '<br>Automatischer Nachtlauf ist ausgeschaltet.');
+  const opts = s.daily.map(d => `<option value="${d}">${fmt(d)}</option>`).join('');
+  const f = $('#cfrom').value, t = $('#cto').value;
+  $('#cfrom').innerHTML = opts; $('#cto').innerHTML = opts;
+  if (s.daily.length) { $('#cfrom').value = f || s.daily[0]; $('#cto').value = t || s.daily[s.daily.length-1]; }
+  $('#vcat').disabled = !s.daily.length; catEst();
+  const c2 = (await api('/api/config')).config;
+  $('#s-night').checked = c2.stab_nightly !== false; $('#s-fps').value = String(c2.stab_fps || 24);
+  $('#s-w').value = String(c2.stab_width || 0); $('#s-ov').checked = c2.stab_overlay !== false;
+  $('#s-start').innerHTML = '<option value="">Erster Tag</option>' + DAYS.slice().reverse().map(d => `<option value="${d.day}">${d.label}</option>`).join('');
+  $('#s-start').value = c2.stab_start || '';
+}
+function catEst(){
+  const n = STAB ? STAB.daily.filter(d => d >= $('#cfrom').value && d <= $('#cto').value).length : 0;
+  $('#vcatest').textContent = n ? `${n} Tag${n>1?'e':''} – dauert nur Sekunden (ohne Neukodieren)` : '';
+}
+$('#cfrom').onchange = catEst; $('#cto').onchange = catEst;
+$('#vcat').onclick = async () => {
+  const j = await api('/api/video/concat', {from:$('#cfrom').value, to:$('#cto').value});
+  if (!j.ok) return toast(j.error || 'Fehler'); showJob(j.job); pollJob();
+};
+$('#s-save').onclick = async () => {
+  const j = await api('/api/config', {stab_nightly:$('#s-night').checked, stab_start:$('#s-start').value,
+    stab_fps:+$('#s-fps').value, stab_width:+$('#s-w').value, stab_overlay:$('#s-ov').checked});
+  $('#s-msg').textContent = j.ok ? 'Gespeichert.' : 'Fehler: ' + j.error; loadStab();
+};
+$('#s-reset').onclick = async () => {
+  if (!confirm('Alle Ausrichtungen verwerfen und ab dem Starttag neu ausrichten? Das passiert in der nächsten Dunkelphase und kann dauern.')) return;
+  const j = await api('/api/stab/reset', {start:$('#s-start').value});
+  $('#s-msg').textContent = j.ok ? 'Zurückgesetzt. Wird in der nächsten Dunkelphase neu ausgerichtet.' : 'Fehler: ' + (j.error||''); loadStab();
+};
 
 // ---------- settings
 const SL = [['c-darkr','v-dark'],['c-warm','v-warm'],['c-q','v-q'],['c-wb','v-wb'],['c-exp','v-exp'],['c-br','v-br'],['c-co','v-co'],['c-sa','v-sa'],['c-sh','v-sh']];

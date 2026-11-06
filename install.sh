@@ -20,6 +20,7 @@ PORT=""
 DATA=""
 RUN_USER=""
 START=1
+STAB=auto
 USERMODE=0
 NAME=""
 DEVICE=""
@@ -46,6 +47,8 @@ Optionen:
                  eigener Port, Daten in ~/growcam-NAME), z.B. --name wurzeln
   --device PFAD  Kamera fest zuordnen, z.B. /dev/v4l/by-id/usb-...-video-index0
                  (wichtig, sobald mehrere Kameras angeschlossen sind)
+  --stab         Bildstabilisierung (OpenCV) auch auf Pi 1 / Zero installieren
+  --no-stab      OpenCV nicht installieren (Stabilisierung bleibt aus)
   --no-start     Dienste installieren, aber nicht starten
   -h, --help     Diese Hilfe
 EOF
@@ -59,6 +62,8 @@ while [ $# -gt 0 ]; do
     --user-service) USERMODE=1; shift ;;
     --name) NAME="${2:?}"; shift 2 ;;
     --device) DEVICE="${2:?}"; shift 2 ;;
+    --stab) STAB=1; shift ;;
+    --no-stab) STAB=0; shift ;;
     --no-start) START=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unbekannte Option: $1 (siehe --help)" ;;
@@ -70,6 +75,7 @@ done
 SFX="${NAME:+-$NAME}"                 # Namenszusatz fuer Dienste/Dateien
 WEB="growcam$SFX-web"
 CAP="growcam$SFX-capture"
+STB="growcam$SFX-stab"
 ENVFILE="/etc/default/growcam$SFX"
 # Benutzer-Modus bereits installiert? -> beim Update beibehalten
 # (auch fuer neue Instanzen: laeuft schon irgendeine GrowCam-Instanz als Benutzerdienst?)
@@ -152,10 +158,19 @@ fi
 
 # ------------------------------------------------------------ Pakete
 PKGS=(python3 ffmpeg v4l-utils fonts-dejavu-core)
+# Bildstabilisierung braucht OpenCV (gross) -> auf Pi 1 / Zero nur mit --stab
+WEAK=0
+if grep -q '^armv6' <<<"$(uname -m)" || [ "$(nproc)" -le 1 ]; then WEAK=1; fi
+if [ "$STAB" = "1" ] || { [ "$STAB" = "auto" ] && [ "$WEAK" -eq 0 ]; }; then
+  PKGS+=(python3-opencv python3-numpy)
+fi
 if [ "$USERMODE" -eq 1 ]; then
   for b in python3 ffmpeg v4l2-ctl; do
     command -v "$b" >/dev/null || die "'$b' fehlt. Einmalig installieren: sudo apt install python3 ffmpeg v4l-utils fonts-dejavu-core"
   done
+  if [ "$STAB" != "0" ] && ! python3 -c 'import cv2, numpy' 2>/dev/null; then
+    warn "OpenCV fehlt – Bildstabilisierung bleibt aus. Nachruesten: sudo apt install python3-opencv"
+  fi
 elif command -v apt-get >/dev/null; then
   MISSING=()
   for p in "${PKGS[@]}"; do
@@ -163,7 +178,7 @@ elif command -v apt-get >/dev/null; then
   done
   if [ ${#MISSING[@]} -gt 0 ]; then
     say "Installiere Pakete: ${MISSING[*]}"
-    if grep -q '^armv6' <<<"$(uname -m)" || [ "$(nproc)" -le 1 ]; then
+    if [ "$WEAK" -eq 1 ]; then
       warn "Auf einem Pi 1 / Zero dauert das SEHR lange (oft 30-60 Minuten). Bitte nicht abbrechen!"
     fi
     # Wiederholungen + IPv4: kurze Netz-Aussetzer (z.B. LTE) brechen sonst den ganzen Download ab
@@ -238,7 +253,8 @@ EOF
 
 # ------------------------------------------------------------ Dienste
 say "Richte systemd-Dienste ein"
-for u in growcam-web.service growcam-capture.service growcam-capture.timer; do
+for u in growcam-web.service growcam-capture.service growcam-capture.timer \
+         growcam-stab.service growcam-stab.timer; do
   dst="${u/growcam-/growcam$SFX-}"          # z.B. growcam-wurzeln-web.service
   if [ "$USERMODE" -eq 1 ]; then
     # Benutzerdienste: kein User=/Gruppen, kein network-online, Ziel default.target
@@ -263,7 +279,7 @@ if command -v ss >/dev/null && ss -ltnH "sport = :$PORT" 2>/dev/null | grep -q .
 fi
 
 if [ "$START" -eq 1 ]; then
-  $SUDO $SYSTEMCTL enable --now "$CAP.timer" >/dev/null
+  $SUDO $SYSTEMCTL enable --now "$CAP.timer" "$STB.timer" >/dev/null
   $SUDO $SYSTEMCTL enable "$WEB.service" >/dev/null
   $SUDO $SYSTEMCTL restart "$WEB.service"
   # alle Instanzen nutzen dasselbe Programm -> weitere laufende Instanzen neu starten
@@ -271,7 +287,7 @@ if [ "$START" -eq 1 ]; then
     [ "$other" = "$WEB.service" ] || $SUDO $SYSTEMCTL restart "$other" || true
   done
 else
-  $SUDO $SYSTEMCTL enable "$CAP.timer" "$WEB.service" >/dev/null
+  $SUDO $SYSTEMCTL enable "$CAP.timer" "$STB.timer" "$WEB.service" >/dev/null
 fi
 
 # ------------------------------------------------------------ Kamera pruefen
