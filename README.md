@@ -38,6 +38,8 @@ curl -fsSL https://raw.githubusercontent.com/JoergSH/GrowCam/main/install.sh | b
 | `--data DIR` | Ordner für Bilder, Videos und Einstellungen | `~/growcam` |
 | `--user NAME` | Benutzer, unter dem GrowCam läuft | aufrufender Benutzer |
 | `--user-service` | ohne Root/sudo installieren, als systemd-Benutzerdienst (Pakete müssen schon vorhanden sein) | – |
+| `--name NAME` | weitere Instanz für eine zusätzliche Kamera | – |
+| `--device PFAD` | Kamera fest zuordnen (`/dev/v4l/by-id/...`) | automatisch |
 | `--no-start` | nur installieren, nicht starten | – |
 
 Alternativ aus dem geklonten Repo:
@@ -50,6 +52,23 @@ cd GrowCam && bash install.sh
 **Update:** einfach den Installer erneut ausführen. Einstellungen und Bilder bleiben erhalten.
 
 **Entfernen:** `sudo bash /opt/growcam/uninstall.sh` (im Benutzer-Modus: `bash ~/.local/share/growcam/uninstall.sh`). Die Bilder bleiben erhalten; mit `--purge` wird auch der Datenordner gelöscht.
+
+## Mehrere Kameras
+
+Jede Kamera bekommt eine eigene GrowCam-Instanz mit eigener Weboberfläche, eigenem Zeitplan und eigenem Datenordner. Die Aufnahmen laufen nacheinander, die Kameras teilen sich also nie gleichzeitig die USB-Bandbreite.
+
+```bash
+# vorhandene Kameras anzeigen
+ls /dev/v4l/by-id/*-video-index0
+
+# Hauptinstanz fest auf Kamera 1 setzen (wichtig, sobald mehrere Kameras dran sind)
+curl -fsSL https://raw.githubusercontent.com/JoergSH/GrowCam/main/install.sh | bash -s -- --device /dev/v4l/by-id/usb-...Kamera1...-video-index0
+
+# zweite Instanz "wurzeln" für Kamera 2 – bekommt automatisch den nächsten freien Port (8081)
+curl -fsSL https://raw.githubusercontent.com/JoergSH/GrowCam/main/install.sh | bash -s -- --name wurzeln --device /dev/v4l/by-id/usb-...Kamera2...-video-index0
+```
+
+Entfernen einer Instanz: `uninstall.sh --name wurzeln`. Die anderen Instanzen laufen weiter.
 
 ## Hardware
 

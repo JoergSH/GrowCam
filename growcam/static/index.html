@@ -72,7 +72,7 @@ video{width:100%;border-radius:10px;background:#000;margin-top:10px}
 </head>
 <body>
 <header>
-  <h1><span id="sdot" class="dot"></span> GrowCam</h1>
+  <h1><span id="sdot" class="dot"></span> <span id="ttl">GrowCam</span></h1>
   <span class="stat">Letztes Bild: <b id="s-last">–</b></span>
   <span class="stat">Bilder: <b id="s-count">–</b></span>
   <span class="stat">Frei: <b id="s-disk">–</b></span>
@@ -286,6 +286,7 @@ async function refreshStatus(){
     `<br>Hardware: ${s.hw.model || s.hw.machine} (${s.hw.cpus} Kern${s.hw.cpus>1?'e':''})${s.hw.weak?' – sparsamer Modus':''}`+
     `<br>Datenordner: ${s.data_dir}<br>GrowCam ${s.version}`;
   if (!vwSet) { vwSet = true; if (s.hw.weak) $('#vw').value = '1280'; }
+  if (s.name) { const t = 'GrowCam · ' + s.name; if ($('#ttl').textContent !== t) { $('#ttl').textContent = t; document.title = t; } }
   if (s.job && s.job.state) showJob(s.job);
 }
 

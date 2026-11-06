@@ -21,8 +21,8 @@ DATA=""
 RUN_USER=""
 START=1
 USERMODE=0
-# Benutzer-Modus bereits installiert? -> beim Update beibehalten
-[ "$(id -u)" -ne 0 ] && [ -f "$HOME/.config/growcam/growcam.env" ] && USERMODE=1
+NAME=""
+DEVICE=""
 
 c_ok=$'\e[32m'; c_warn=$'\e[33m'; c_err=$'\e[31m'; c_b=$'\e[1m'; c_0=$'\e[0m'
 [ -t 1 ] || { c_ok=""; c_warn=""; c_err=""; c_b=""; c_0=""; }
@@ -42,6 +42,10 @@ Optionen:
   --user-service Ohne Root installieren: Programm unter ~/.local/share/growcam,
                  Dienste als systemd-Benutzerdienste (kein sudo noetig; python3,
                  ffmpeg und v4l-utils muessen dann schon installiert sein)
+  --name NAME    Weitere Instanz fuer eine zusaetzliche Kamera (eigene Dienste,
+                 eigener Port, Daten in ~/growcam-NAME), z.B. --name wurzeln
+  --device PFAD  Kamera fest zuordnen, z.B. /dev/v4l/by-id/usb-...-video-index0
+                 (wichtig, sobald mehrere Kameras angeschlossen sind)
   --no-start     Dienste installieren, aber nicht starten
   -h, --help     Diese Hilfe
 EOF
@@ -53,11 +57,25 @@ while [ $# -gt 0 ]; do
     --data) DATA="${2:?}"; shift 2 ;;
     --user) RUN_USER="${2:?}"; shift 2 ;;
     --user-service) USERMODE=1; shift ;;
+    --name) NAME="${2:?}"; shift 2 ;;
+    --device) DEVICE="${2:?}"; shift 2 ;;
     --no-start) START=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unbekannte Option: $1 (siehe --help)" ;;
   esac
 done
+
+[ -z "$NAME" ] || [[ "$NAME" =~ ^[a-z0-9][a-z0-9-]{0,20}$ ]] \
+  || die "--name: nur Kleinbuchstaben, Ziffern und Bindestrich (z.B. wurzeln)"
+SFX="${NAME:+-$NAME}"                 # Namenszusatz fuer Dienste/Dateien
+WEB="growcam$SFX-web"
+CAP="growcam$SFX-capture"
+ENVFILE="/etc/default/growcam$SFX"
+# Benutzer-Modus bereits installiert? -> beim Update beibehalten
+# (auch fuer neue Instanzen: laeuft schon irgendeine GrowCam-Instanz als Benutzerdienst?)
+if [ "$(id -u)" -ne 0 ] && compgen -G "$HOME/.config/growcam/growcam*.env" >/dev/null; then
+  USERMODE=1
+fi
 
 # ------------------------------------------------------------ Voraussetzungen
 [ "$(uname -s)" = "Linux" ] || die "GrowCam laeuft nur unter Linux."
@@ -70,7 +88,7 @@ if [ "$USERMODE" -eq 1 ]; then
   SUDO=""
   RUN_USER="$(id -un)"
   APPDIR="$HOME/.local/share/growcam"
-  ENVFILE="$HOME/.config/growcam/growcam.env"
+  ENVFILE="$HOME/.config/growcam/growcam$SFX.env"
   UNITDIR="$HOME/.config/systemd/user"
   SYSTEMCTL="systemctl --user"
 elif [ "$(id -u)" -eq 0 ]; then
@@ -92,12 +110,21 @@ if [ -f "$ENVFILE" ]; then
   PORT="${PORT:-${GROWCAM_PORT:-}}"
   DATA="${DATA:-${GROWCAM_DATA:-}}"
 fi
-PORT="${PORT:-8080}"
-DATA="${DATA:-$RUN_HOME/growcam}"
+if [ -z "$PORT" ]; then
+  PORT=8080
+  if [ -n "$NAME" ]; then          # weitere Instanz: naechsten freien Port ab 8081 nehmen
+    PORT=8081
+    while command -v ss >/dev/null && ss -ltnH "sport = :$PORT" 2>/dev/null | grep -q .; do
+      PORT=$((PORT + 1))
+    done
+  fi
+fi
+DATA="${DATA:-$RUN_HOME/growcam$SFX}"
 case "$DATA" in "~"*) DATA="$RUN_HOME${DATA#\~}" ;; esac
 [[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || die "Ungueltiger Port: $PORT"
 
 [ "$USERMODE" -eq 1 ] && say "Benutzer-Modus (ohne Root)"
+[ -n "$NAME" ] && say "Instanz: ${c_b}$NAME${c_0}"
 say "${c_b}GrowCam-Installation${c_0} fuer Benutzer ${c_b}$RUN_USER${c_0}, Port ${c_b}$PORT${c_0}, Daten in ${c_b}$DATA${c_0}"
 MODEL="$( { tr -d '\0' < /proc/device-tree/model; } 2>/dev/null || true)"
 say "System: ${MODEL:-$(uname -m)} ($(uname -m), $(nproc) Kern(e))"
@@ -174,6 +201,22 @@ if ! id -nG "$RUN_USER" | tr ' ' '\n' | grep -qx video; then
 fi
 $SUDO mkdir -p "$DATA"
 $SUDO chown "$RUN_USER": "$DATA"
+if [ -n "$DEVICE" ]; then
+  [ -e "$DEVICE" ] || warn "Kamera $DEVICE ist gerade nicht vorhanden – wird trotzdem eingetragen."
+  say "Ordne Kamera fest zu: $DEVICE"
+  # in config.json eintragen, vorhandene Einstellungen bleiben erhalten
+  $SUDO python3 - "$DATA/config.json" "$DEVICE" <<'PY'
+import json, sys
+p, dev = sys.argv[1], sys.argv[2]
+try:
+    c = json.load(open(p))
+except Exception:
+    c = {}
+c["device"] = dev
+json.dump(c, open(p, "w"), indent=2)
+PY
+  $SUDO chown "$RUN_USER": "$DATA/config.json"
+fi
 
 # ------------------------------------------------------------ Programm
 say "Installiere Programm nach $APPDIR"
@@ -187,22 +230,25 @@ $SUDO install -m 0755 "$SRC/uninstall.sh" "$APPDIR/uninstall.sh"
 
 $SUDO mkdir -p "$(dirname "$ENVFILE")" "$UNITDIR"
 $SUDO tee "$ENVFILE" >/dev/null <<EOF
-# GrowCam – nach Aenderung: ${SUDO:+sudo }$SYSTEMCTL restart growcam-web
+# GrowCam – nach Aenderung: ${SUDO:+sudo }$SYSTEMCTL restart $WEB
 GROWCAM_DATA=$DATA
 GROWCAM_PORT=$PORT
+GROWCAM_NAME=$NAME
 EOF
 
 # ------------------------------------------------------------ Dienste
 say "Richte systemd-Dienste ein"
 for u in growcam-web.service growcam-capture.service growcam-capture.timer; do
+  dst="${u/growcam-/growcam$SFX-}"          # z.B. growcam-wurzeln-web.service
   if [ "$USERMODE" -eq 1 ]; then
     # Benutzerdienste: kein User=/Gruppen, kein network-online, Ziel default.target
     sed -e '/^User=/d' -e '/^SupplementaryGroups=/d' -e '/network-online.target/d' \
-        -e 's/multi-user.target/default.target/' \
-        -e "s|@APPDIR@|$APPDIR|g" -e "s|@ENVFILE@|$ENVFILE|g" "$SRC/systemd/$u" > "$UNITDIR/$u"
+        -e 's/multi-user.target/default.target/' -e "s|^Description=GrowCam|Description=GrowCam${NAME:+ ($NAME)}|" \
+        -e "s|@APPDIR@|$APPDIR|g" -e "s|@ENVFILE@|$ENVFILE|g" "$SRC/systemd/$u" > "$UNITDIR/$dst"
   else
     sed -e "s|@USER@|$RUN_USER|g" -e "s|@APPDIR@|$APPDIR|g" -e "s|@ENVFILE@|$ENVFILE|g" \
-        "$SRC/systemd/$u" | $SUDO tee "$UNITDIR/$u" >/dev/null
+        -e "s|^Description=GrowCam|Description=GrowCam${NAME:+ ($NAME)}|" \
+        "$SRC/systemd/$u" | $SUDO tee "$UNITDIR/$dst" >/dev/null
   fi
 done
 $SUDO $SYSTEMCTL daemon-reload
@@ -212,16 +258,20 @@ if [ "$USERMODE" -eq 1 ] && [ "$(loginctl show-user "$RUN_USER" -p Linger --valu
 fi
 
 if command -v ss >/dev/null && ss -ltnH "sport = :$PORT" 2>/dev/null | grep -q . \
-   && ! $SYSTEMCTL is-active --quiet growcam-web; then
+   && ! $SYSTEMCTL is-active --quiet "$WEB"; then
   warn "Port $PORT ist schon belegt. Anderen Port waehlen: bash install.sh --port 8081"
 fi
 
 if [ "$START" -eq 1 ]; then
-  $SUDO $SYSTEMCTL enable --now growcam-capture.timer >/dev/null
-  $SUDO $SYSTEMCTL enable growcam-web.service >/dev/null
-  $SUDO $SYSTEMCTL restart growcam-web.service
+  $SUDO $SYSTEMCTL enable --now "$CAP.timer" >/dev/null
+  $SUDO $SYSTEMCTL enable "$WEB.service" >/dev/null
+  $SUDO $SYSTEMCTL restart "$WEB.service"
+  # alle Instanzen nutzen dasselbe Programm -> weitere laufende Instanzen neu starten
+  for other in $($SYSTEMCTL list-units --type=service --state=running --no-legend 'growcam*-web.service' 2>/dev/null | awk '{print $1}'); do
+    [ "$other" = "$WEB.service" ] || $SUDO $SYSTEMCTL restart "$other" || true
+  done
 else
-  $SUDO $SYSTEMCTL enable growcam-capture.timer growcam-web.service >/dev/null
+  $SUDO $SYSTEMCTL enable "$CAP.timer" "$WEB.service" >/dev/null
 fi
 
 # ------------------------------------------------------------ Kamera pruefen
@@ -236,10 +286,15 @@ fi
 if ! ls /dev/video* >/dev/null 2>&1; then
   warn "Keine Kamera gefunden – USB-Webcam anschliessen; GrowCam erkennt sie automatisch."
 fi
+NCAM=$( { find /dev/v4l/by-id -name '*-video-index0' 2>/dev/null || true; } | wc -l)
+if [ "$NCAM" -gt 1 ] && [ -z "$DEVICE" ]; then
+  warn "Mehrere Kameras angeschlossen. Ordne jeder Instanz ihre Kamera fest zu (Einstellungen -> Kamera-Geraet oder --device):"
+  find /dev/v4l/by-id -name '*-video-index0' >&2
+fi
 
-IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+IP="$( { hostname -I 2>/dev/null || true; } | awk '{print $1}')"
 echo
 say "${c_b}Fertig!${c_0}  Weboberflaeche: ${c_b}http://${IP:-$(hostname)}:$PORT${c_0}"
 echo "    Zeitplan, Lichtzeiten und Bildeinstellungen dort unter 'Einstellungen'."
-echo "    Status:      $SYSTEMCTL status growcam-web growcam-capture.timer"
-echo "    Entfernen:   ${SUDO:+sudo }$APPDIR/uninstall.sh   (Bilder bleiben erhalten)"
+echo "    Status:      $SYSTEMCTL status $WEB $CAP.timer"
+echo "    Entfernen:   ${SUDO:+sudo }$APPDIR/uninstall.sh${NAME:+ --name $NAME}   (Bilder bleiben erhalten)"

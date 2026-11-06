@@ -136,6 +136,7 @@ def status():
         "dark_today": dark_count(now.strftime("%Y-%m-%d")),
         "dark_total": dark_count(),
         "version": core.VERSION,
+        "name": os.environ.get("GROWCAM_NAME", ""),
         "hw": core.hw_profile(),
         "data_dir": core.BASE,
     }
